@@ -1,0 +1,17 @@
+[
+    {
+        "account": "test_admin",
+        "hashed_password": "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW",
+        "scopes": [
+            "deploy_api",
+            "vm_api"
+        ]
+    },
+    {
+        "account": "test_deployer",
+        "hashed_password": "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW",
+        "scopes": [
+            "deploy_api"
+        ]
+    }
+]

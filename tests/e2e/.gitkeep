@@ -1,0 +1,2 @@
+# E2E tests placeholder
+# Run against a live server: APP_ENV=dev uvicorn app.main:app --port 8000
