@@ -52,7 +52,6 @@ class AuthService:
             )
             raise AuthException(
                 "Invalid account or password.",
-                source_function="AuthService.authenticate",
             )
 
         _logger.info("Authentication successful | account=%s", account)

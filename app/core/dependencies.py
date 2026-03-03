@@ -49,14 +49,12 @@ def get_current_user(required_scopes: list[str] | None = None) -> Callable:
         if not account:
             raise AuthException(
                 "Token is missing subject claim.",
-                source_function="get_current_user._dependency",
             )
 
         missing = [s for s in required if s not in scopes]
         if missing:
             raise ForbiddenException(
                 f"Token is missing required scopes: {missing}",
-                source_function="get_current_user._dependency",
                 detail={"required": required, "missing": missing},
             )
 

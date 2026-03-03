@@ -14,8 +14,9 @@ help:
 	@echo "  Deploy Service — 常用指令"
 	@echo ""
 	@echo "  make install      安裝所有依賴（含 dev）到 .venv/"
-	@echo "  make dev          啟動開發伺服器（熱重載，port 8000）"
-	@echo "  make prod         啟動生產伺服器（無熱重載）"
+	@echo "  make start        啟動伺服器（使用 .env，不帶 APP_ENV）"
+	@echo "  make dev          啟動開發伺服器（使用 .env + .env.dev，熱重載）"
+	@echo "  make prod         啟動生產伺服器（使用 .env + .env.prod）"
 	@echo ""
 	@echo "  make test         執行全部測試"
 	@echo "  make test-unit    只執行 unit tests"
@@ -32,10 +33,17 @@ install:
 	$(UV) sync --group dev
 
 # ─── Run ─────────────────────────────────────────────────────────────────────
+# start: 只讀 .env（不設 APP_ENV，適合生產部署只有單一 .env 的情境）
+.PHONY: start
+start:
+	$(UV) run uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# dev: 讀 .env + .env.dev（.env.dev 的值會覆蓋 .env）
 .PHONY: dev
 dev:
 	APP_ENV=dev $(UV) run uvicorn app.main:app --reload --port 8000
 
+# prod: 讀 .env + .env.prod（.env.prod 的值會覆蓋 .env）
 .PHONY: prod
 prod:
 	APP_ENV=prod $(UV) run uvicorn app.main:app --host 0.0.0.0 --port 8000

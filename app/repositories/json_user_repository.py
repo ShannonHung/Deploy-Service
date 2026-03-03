@@ -48,7 +48,6 @@ class JsonUserRepository(UserRepository):
             )
             raise NotFoundException(
                 f"Users data file not found at '{self._path}'.",
-                source_function="JsonUserRepository._load",
             )
         with self._path.open(encoding="utf-8") as fh:
             return json.load(fh)

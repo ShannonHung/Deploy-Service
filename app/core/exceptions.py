@@ -13,6 +13,7 @@ Design principles:
 
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import Any
 
@@ -40,8 +41,19 @@ class BaseAppException(Exception):
     ) -> None:
         super().__init__(message)
         self.message = message
-        self.source_function = source_function
         self.detail = detail
+
+        # Auto-detect caller's qualified name when not provided.
+        # co_qualname (Python 3.11+) returns e.g. "GitlabPipelineRepository.trigger"
+        # so renaming the function or class is reflected here automatically.
+        if source_function:
+            self.source_function = source_function
+        else:
+            frame = inspect.currentframe()
+            caller = frame.f_back if frame is not None else None
+            self.source_function = (
+                caller.f_code.co_qualname if caller is not None else "unknown"
+            )
 
     def log(self, logger: logging.Logger) -> None:
         """Emit a structured log entry at the appropriate level."""
@@ -88,6 +100,30 @@ class ValidationException(BaseAppException):
 
     http_status = 422
     error_code = "VALIDATION_ERROR"
+    log_level = logging.WARNING
+
+
+class GitlabOperationException(BaseAppException):
+    """Raised when a GitLab API call returns an error.
+
+    Wraps ``gitlab.exceptions.GitlabError`` so callers outside the
+    infrastructure layer never need to import python-gitlab directly.
+    """
+
+    http_status = 502
+    error_code = "GITLAB_ERROR"
+    log_level = logging.ERROR
+
+
+class ConflictException(BaseAppException):
+    """Raised when the requested action conflicts with the current state.
+
+    Example: trying to trigger a pipeline that is already running with
+    identical parameters.
+    """
+
+    http_status = 409
+    error_code = "CONFLICT"
     log_level = logging.WARNING
 
 

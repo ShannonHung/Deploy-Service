@@ -74,6 +74,5 @@ def decode_access_token(token: str) -> dict[str, Any]:
     except JWTError as exc:
         raise AuthException(
             "Invalid or expired token.",
-            source_function="decode_access_token",
             detail=str(exc),
         ) from exc
