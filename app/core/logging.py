@@ -3,10 +3,11 @@ app/core/logging.py
 
 Request-ID middleware and logging configuration.
 
-Every inbound request gets a UUID4 request_id that is:
-  - Stored on request.state.request_id
-  - Injected into all log records via RequestIdFilter
-  - Returned in response headers as X-Request-ID
+X-Coordination-ID behaviour:
+  - If the incoming request has an X-Coordination-ID header, that value is used
+    as the request_id and echoed back in X-Coordination-ID response header.
+  - If the header is absent a UUID4 is generated internally for logging only;
+    it is NOT added to the response headers (the caller didn't ask for one).
 """
 
 from __future__ import annotations
@@ -19,17 +20,15 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+COORDINATION_ID_HEADER = "X-Coordination-ID"
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Log filter — injects request_id into every log record
 # ──────────────────────────────────────────────────────────────────────────────
 
 class RequestIdFilter(logging.Filter):
-    """Logging filter that adds ``request_id`` to log records.
-
-    When called outside of a request context the filter defaults to "N/A".
-    Uses a module-level variable set by the middleware on each request.
-    """
+    """Logging filter that adds ``request_id`` to log records."""
 
     _current_request_id: str = "N/A"
 
@@ -46,21 +45,32 @@ _request_id_filter = RequestIdFilter()
 # ──────────────────────────────────────────────────────────────────────────────
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
-    """Starlette middleware that assigns a unique request_id to every request."""
+    """Assign a request_id to every incoming request.
+
+    Priority:
+      1. X-Coordination-ID request header  → use as-is, echo in response header
+      2. No header present                  → generate UUID4 for internal logging,
+                                              do NOT add to response headers
+    """
 
     async def dispatch(
         self,
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        request_id = str(uuid.uuid4())
-        request.state.request_id = request_id
+        coordination_id = request.headers.get(COORDINATION_ID_HEADER)
+        from_client = coordination_id is not None
+        request_id = coordination_id or str(uuid.uuid4())
 
-        # Make request_id available to all log records within this request
+        request.state.request_id = request_id
         RequestIdFilter._current_request_id = request_id
 
         response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
+
+        if from_client:
+            # Echo back only when the client explicitly provided the header
+            response.headers[COORDINATION_ID_HEADER] = request_id
+
         return response
 
 
@@ -69,10 +79,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def setup_logging(log_level: str = "INFO") -> None:
-    """Configure root logger with request_id in the format string.
-
-    Call once in ``lifespan`` startup.
-    """
+    """Configure root logger with request_id in the format string."""
     level = getattr(logging, log_level.upper(), logging.INFO)
 
     handler = logging.StreamHandler()

@@ -7,7 +7,14 @@ Layers:
   - Storage models  : shapes that match the JSON / DB store
   - Domain models   : business objects passed between layers
   - Request models  : validated HTTP request bodies
-  - Response models : HTTP response payloads (unified BaseResponse wrapper)
+  - Response models : HTTP response payloads
+
+Response design (REST-style):
+  Success → {"data": <T>, "request_id": "..."}
+  Error   → {"error": {"code": "...", "message": "..."}, "request_id": "..."}
+
+  HTTP status code carries the success/failure signal — no redundant
+  "success" boolean or "error: null" in the body.
 """
 
 from __future__ import annotations
@@ -64,26 +71,34 @@ class HashPasswordRequest(BaseModel):
 # Response models
 # ──────────────────────────────────────────────────────────────────────────────
 
+class ApiResponse(BaseModel, Generic[T]):
+    """Unified success response envelope.
+
+    All successful endpoints return:
+        {"data": <T>, "request_id": "uuid"}
+
+    HTTP 2xx status communicates success — no redundant ``success`` field.
+    """
+
+    data: T
+    request_id: str = ""
+
+
 class ErrorDetail(BaseModel):
-    """Structured error payload embedded inside BaseResponse on failure."""
+    """Structured error payload for failed responses.
+
+    Returned as:
+        {"error": {"code": "...", "message": "..."}, "request_id": "uuid"}
+    """
 
     code: str
     message: str
     detail: Any = None
 
 
-class BaseResponse(BaseModel, Generic[T]):
-    """Universal response envelope used by every endpoint.
-
-    Success:  ``{"success": true,  "data": <T>,   "error": null, "request_id": "..."}``
-    Failure:  ``{"success": false, "data": null,   "error": {...}, "request_id": "..."}``
-    """
-
-    success: bool
-    data: T | None = None
-    error: ErrorDetail | None = None
-    request_id: str = ""
-
+# ──────────────────────────────────────────────────────────────────────────────
+# Endpoint-specific data payloads
+# ──────────────────────────────────────────────────────────────────────────────
 
 class TokenData(BaseModel):
     """Internal data payload used by AuthService when generating a token."""
@@ -98,7 +113,7 @@ class OAuth2TokenResponse(BaseModel):
 
     Swagger UI requires ``access_token`` and ``token_type`` at the TOP LEVEL
     of the response to auto-populate the Authorization header.  Other endpoints
-    continue to use the unified ``BaseResponse[T]`` envelope.
+    use the unified ``ApiResponse[T]`` envelope.
     """
 
     access_token: str
@@ -106,38 +121,22 @@ class OAuth2TokenResponse(BaseModel):
     expires_in: int
 
 
-class TokenResponse(BaseResponse[TokenData]):
-    """Unified response for POST /token (kept for programmatic consumers)."""
-
-
 class VerifyData(BaseModel):
-    """Data payload returned by GET /api/v1/auth/verify."""
+    """Data payload for GET /api/v1/auth/verify."""
 
     account: str
     scopes: list[str]
     valid: bool = True
 
 
-class VerifyResponse(BaseResponse[VerifyData]):
-    """Unified response for GET /api/v1/auth/verify."""
-
-
 class HashPasswordData(BaseModel):
-    """Data payload returned by POST /api/v1/auth/hash-password."""
+    """Data payload for POST /api/v1/auth/hash-password."""
 
     hashed_password: str
 
 
-class HashPasswordResponse(BaseResponse[HashPasswordData]):
-    """Unified response for POST /api/v1/auth/hash-password."""
-
-
 class MyScopesData(BaseModel):
-    """Data payload returned by GET /api/v1/auth/my-scopes."""
+    """Data payload for GET /api/v1/auth/my-scopes."""
 
     account: str
     scopes: list[str]
-
-
-class MyScopesResponse(BaseResponse[MyScopesData]):
-    """Unified response for GET /api/v1/auth/my-scopes."""

@@ -5,8 +5,8 @@ Custom application exception hierarchy.
 
 Design principles:
   - Every exception carries: error_code, http_status, log_level, source_function
-  - A global handler in main.py catches BaseAppException and returns a
-    unified JSON error response.
+  - A global handler in main.py catches BaseAppException and returns:
+      {"error": {"code": "...", "message": "..."}, "request_id": "..."}
   - Unhandled exceptions fall through to a catch-all handler that logs
     the full traceback without leaking internals to the client.
 """
@@ -98,25 +98,33 @@ class ValidationException(BaseAppException):
 _logger = logging.getLogger(__name__)
 
 
+def _error_body(code: str, message: str, request_id: str, detail: Any = None) -> dict:
+    """Build the standard error response body.
+
+    Shape:
+        {"error": {"code": "...", "message": "...", "detail": ...}, "request_id": "..."}
+    """
+    error: dict = {"code": code, "message": message}
+    if detail is not None:
+        error["detail"] = detail
+    return {"error": error, "request_id": request_id}
+
+
 async def app_exception_handler(
     request: Request, exc: BaseAppException
 ) -> JSONResponse:
-    """Handle all BaseAppException subclasses with a unified JSON response."""
+    """Handle all BaseAppException subclasses with a unified JSON error response."""
     request_id: str = getattr(request.state, "request_id", "")
     exc.log(_logger)
 
     return JSONResponse(
         status_code=exc.http_status,
-        content={
-            "success": False,
-            "error": {
-                "code": exc.error_code,
-                "message": exc.message,
-                "detail": exc.detail,
-            },
-            "data": None,
-            "request_id": request_id,
-        },
+        content=_error_body(
+            code=exc.error_code,
+            message=exc.message,
+            request_id=request_id,
+            detail=exc.detail,
+        ),
     )
 
 
@@ -137,14 +145,9 @@ async def unhandled_exception_handler(
 
     return JSONResponse(
         status_code=500,
-        content={
-            "success": False,
-            "error": {
-                "code": "INTERNAL_SERVER_ERROR",
-                "message": "An unexpected error occurred. Please try again later.",
-                "detail": None,
-            },
-            "data": None,
-            "request_id": request_id,
-        },
+        content=_error_body(
+            code="INTERNAL_SERVER_ERROR",
+            message="An unexpected error occurred. Please try again later.",
+            request_id=request_id,
+        ),
     )
