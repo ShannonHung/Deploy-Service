@@ -41,7 +41,7 @@ start:
 # dev: 讀 .env + .env.dev（.env.dev 的值會覆蓋 .env）
 .PHONY: dev
 dev:
-	APP_ENV=dev $(UV) run uvicorn app.main:app --reload --port 8000
+	APP_ENV=dev $(UV) run uvicorn app.main:app --reload --port 8001
 
 # prod: 讀 .env + .env.prod（.env.prod 的值會覆蓋 .env）
 .PHONY: prod

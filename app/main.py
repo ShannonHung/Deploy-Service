@@ -18,7 +18,9 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
 from app.core.config import get_settings
@@ -75,9 +77,12 @@ def create_app() -> FastAPI:
         version=settings.APP_VERSION,
         debug=settings.DEBUG,
         lifespan=lifespan,
-        docs_url="/docs" if settings.DEBUG else None,
-        redoc_url="/redoc" if settings.DEBUG else None,
+        docs_url=None,
+        redoc_url=None,
     )
+
+    # ── Static files ───────────────────────────────────────────────────────────
+    app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
     # ── Middleware ─────────────────────────────────────────────────────────────
     app.add_middleware(RequestIdMiddleware)
@@ -96,6 +101,28 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["system"], summary="Health check")
     async def health_check() -> dict[str, str]:
         return {"status": "ok"}
+
+    # ── Offline Documentation ──────────────────────────────────────────────────
+    if settings.DEBUG:
+        @app.get("/docs", include_in_schema=False)
+        async def custom_swagger_ui_html():
+            return get_swagger_ui_html(
+                openapi_url=app.openapi_url,  # type: ignore
+                title=app.title + " - Swagger UI",
+                oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
+                swagger_js_url="/static/docs-assets/swagger-ui-bundle.js",
+                swagger_css_url="/static/docs-assets/swagger-ui.css",
+                swagger_favicon_url="/static/docs-assets/favicon.png",
+            )
+
+        @app.get("/redoc", include_in_schema=False)
+        async def redoc_html():
+            return get_redoc_html(
+                openapi_url=app.openapi_url,  # type: ignore
+                title=app.title + " - ReDoc",
+                redoc_js_url="/static/docs-assets/redoc.standalone.js",
+                redoc_favicon_url="/static/docs-assets/favicon.png",
+            )
 
     # ── Routes ─────────────────────────────────────────────────────────────────
     # Standard OAuth2 token endpoint at root /token.
