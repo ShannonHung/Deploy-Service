@@ -37,7 +37,16 @@ class RequestIdFilter(logging.Filter):
         return True
 
 
+class HealthCheckFilter(logging.Filter):
+    """Filter out /health access logs to reduce noise."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # uvicorn.access logs store the formatted message or args
+        return "/health" not in record.getMessage()
+
+
 _request_id_filter = RequestIdFilter()
+_health_filter = HealthCheckFilter()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -96,3 +105,7 @@ def setup_logging(log_level: str = "INFO") -> None:
     root.setLevel(level)
     root.handlers.clear()
     root.addHandler(handler)
+
+    # ── Uvicorn specific ───────────────────────────────────────────────────────
+    # Filter out /health from access logs
+    logging.getLogger("uvicorn.access").addFilter(_health_filter)

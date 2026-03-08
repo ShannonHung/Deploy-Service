@@ -92,6 +92,11 @@ def create_app() -> FastAPI:
     app.add_exception_handler(BaseAppException, app_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
+    # ── Health check ───────────────────────────────────────────────────────────
+    @app.get("/health", tags=["system"], summary="Health check")
+    async def health_check() -> dict[str, str]:
+        return {"status": "ok"}
+
     # ── Routes ─────────────────────────────────────────────────────────────────
     # Standard OAuth2 token endpoint at root /token.
     # Must return {access_token, token_type} at the TOP LEVEL so that

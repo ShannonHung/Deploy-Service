@@ -2,6 +2,9 @@
 @username = admin
 @password = password
 
+### Health Check
+GET {{baseUrl}}/health
+
 ### Login — Obtains a JWT access token
 # @name login
 POST {{baseUrl}}/token
