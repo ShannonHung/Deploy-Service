@@ -52,3 +52,7 @@ class PipelineRepository(ABC):
 
         Used for duplicate-detection before triggering a new pipeline.
         """
+
+    @abstractmethod
+    async def get_job_trace(self, job_id: int) -> tuple[str, str]:
+        """Fetch the current status and the raw log trace for a specific job."""

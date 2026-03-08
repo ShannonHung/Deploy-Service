@@ -12,10 +12,11 @@ import logging
 
 from app.core.exceptions import ConflictException
 from app.domain.pipeline_models import (
-    PipelineData,
     PipelineVariable,
     RunningPipelinesData,
+    FormattedLogResponse,
 )
+from app.core.log_renderer import LogRenderer
 from app.repositories.pipeline_repository import PipelineRepository
 
 _logger = logging.getLogger(__name__)
@@ -123,3 +124,23 @@ class DeployService:
         """Retry a failed or cancelled pipeline."""
         _logger.info("Retrying pipeline | id=%s", pipeline_id)
         return await self._repo.retry(pipeline_id)
+
+    async def get_job_trace(self, job_id: int) -> tuple[str, str]:
+        """Return the status and raw console output for a job."""
+        return await self._repo.get_job_trace(job_id)
+
+    async def get_formatted_job_trace(self, job_id: int, offset: int = 0) -> FormattedLogResponse:
+        """Return processed HTML logs for the UI."""
+        status, raw_text = await self._repo.get_job_trace(job_id)
+        renderer = LogRenderer()
+        lines = renderer.render(job_id, raw_text)
+        
+        next_offset = len(lines)
+        returned_lines = lines[offset:] if offset < len(lines) else []
+        
+        return FormattedLogResponse(
+            job_id=job_id,
+            status=status,
+            next_offset=next_offset,
+            lines=returned_lines
+        )

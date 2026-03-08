@@ -215,3 +215,22 @@ class GitlabPipelineRepository(PipelineRepository):
             ) from exc
 
         return result
+
+    async def get_job_trace(self, job_id: int) -> tuple[str, str]:
+        project = self._get_project()
+        try:
+            job = project.jobs.get(job_id)
+            # trace() returns bytes; decode to UTF-8
+            return job.status, job.trace().decode("utf-8")
+        except gitlab.exceptions.GitlabGetError as exc:
+            if "404" in str(exc):
+                raise NotFoundException(f"Job {job_id} not found.") from exc
+            raise GitlabOperationException(
+                f"Failed to fetch trace for job {job_id}.",
+                detail=str(exc),
+            ) from exc
+        except gitlab.exceptions.GitlabError as exc:
+            raise GitlabOperationException(
+                f"Failed to fetch trace for job {job_id}.",
+                detail=str(exc),
+            ) from exc
