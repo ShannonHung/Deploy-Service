@@ -1,0 +1,29 @@
+@baseUrl = http://localhost:8001
+@username = admin
+@password = password
+
+### Login — Obtains a JWT access token
+# @name login
+POST {{baseUrl}}/token
+Content-Type: application/x-www-form-urlencoded
+
+username={{username}}&password={{password}}
+
+### Store the access token from the login response
+@token = {{login.response.body.access_token}}
+
+### Verify token validity
+GET {{baseUrl}}/api/v1/auth/verify
+Authorization: Bearer {{token}}
+
+### Inspect current token scopes
+GET {{baseUrl}}/api/v1/auth/my-scopes
+Authorization: Bearer {{token}}
+
+### Hash a plain-text password (no auth required)
+POST {{baseUrl}}/api/v1/auth/hash-password
+Content-Type: application/json
+
+{
+    "password": "new-password"
+}

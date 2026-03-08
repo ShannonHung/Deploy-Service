@@ -1,0 +1,42 @@
+@baseUrl = http://localhost:8001
+# Use the login endpoint in auth.http to get a token and paste it here
+@token = YOUR_TOKEN_HERE
+
+### Trigger a GitLab pipeline
+# action: Pipeline EXECUTION variable value (e.g. test-deploy)
+# ref_name: Git branch or tag (default: main)
+POST {{baseUrl}}/api/v1/deploy/stage?action=test-deploy&ref_name=main
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "variables": {
+        "DEBUG": "true",
+        "REGION": "us-east-1"
+    }
+}
+
+### Check for duplicate running pipelines
+POST {{baseUrl}}/api/v1/deploy/stage/check-running?action=test-deploy&ref_name=main
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "variables": {
+        "DEBUG": "true",
+        "REGION": "us-east-1"
+    }
+}
+
+### Get pipeline status
+@pipeline_id = 123456
+GET {{baseUrl}}/api/v1/deploy/stage/{{pipeline_id}}
+Authorization: Bearer {{token}}
+
+### Cancel a pipeline
+POST {{baseUrl}}/api/v1/deploy/stage/{{pipeline_id}}/cancel
+Authorization: Bearer {{token}}
+
+### Retry a pipeline
+POST {{baseUrl}}/api/v1/deploy/stage/{{pipeline_id}}/retry
+Authorization: Bearer {{token}}
