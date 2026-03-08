@@ -18,7 +18,7 @@ import gitlab
 import gitlab.exceptions
 
 from app.core.exceptions import GitlabOperationException, NotFoundException
-from app.domain.pipeline_models import PipelineData, PipelineVariable
+from app.domain.pipeline_models import JobData, PipelineData, PipelineVariable
 from app.repositories.pipeline_repository import PipelineRepository
 
 _logger = logging.getLogger(__name__)
@@ -79,6 +79,21 @@ class GitlabPipelineRepository(PipelineRepository):
         except gitlab.exceptions.GitlabError:
             return []   # tag_list is best-effort; don't fail the whole request
 
+    def _collect_jobs(self, project: Any, pipeline_id: int) -> list[JobData]:
+        """Return all jobs associated with the pipeline."""
+        try:
+            jobs = project.pipelines.get(pipeline_id).jobs.list()
+            return [
+                JobData(
+                    id=job.id,
+                    name=job.name,
+                    status=job.status,
+                )
+                for job in jobs
+            ]
+        except gitlab.exceptions.GitlabError:
+            return []  # jobs are best-effort; don't fail the whole request
+
     def _collect_variables(self, project: Any, pipeline_id: int) -> list[PipelineVariable]:
         """Return all variables the pipeline was triggered with."""
         try:
@@ -99,6 +114,7 @@ class GitlabPipelineRepository(PipelineRepository):
             finished_at=getattr(pipeline, "finished_at", None),
             tag_list=self._collect_job_tags(project, pid),
             variables=self._collect_variables(project, pid),
+            jobs=self._collect_jobs(project, pid),
             ref_name=getattr(pipeline, "ref", ""),
             web_url=getattr(pipeline, "web_url", ""),
         )
