@@ -30,36 +30,23 @@ class LogRenderer:
             raw_text = raw_text[:-1]
         lines = raw_text.split('\n')
         result = []
-        section_stack = []
-
-        pending_section_start_id = None
 
         for i, raw_line in enumerate(lines):
             line = raw_line
-            timestamp = ""
 
-            # 1. Extract Timestamp
-            ts_match = _TS_REGEX.match(line)
-            if ts_match:
-                ts_raw = ts_match.group(2)
-                timestamp = ts_raw
-                line = line[len(ts_match.group(1)):].strip()
-            
-            # 1.5 Clean log multiplexer noise (e.g., 00O, 01O+, 0K, 00O+ )
+            # 1. Remove timestamp prefixes if any (GitLab injects these)
+            line = _TS_REGEX.sub("", line).strip()
+
+            # 2. Clean log multiplexer noise (e.g., 00O, 01O+, 0K, 00O+ )
+            # Sometimes GitLab runner prepends \x1b[0K (clear line) before the multiplexer noise
+            line = re.sub(r"^\x1b\[0K", "", line)
             line = re.sub(r"^\d{1,2}[A-Za-z][\+\-]?\s*", "", line)
 
-            # 2. Extract Section Info BEFORE \r flattening clobbers it
-            start_match = re.search(r"section_start:(\d+):([^\r\n\u001b\[]+)", line)
-            end_match = re.search(r"section_end:(\d+):([^\r\n\u001b\[]+)", line)
+            # Strip section markers (but optionally keep the text)
+            line = re.sub(r"section_start:\d+:[^\r\n\u001b\[]+(?:\r|(?:\x1b\[0K))?", "", line)
+            line = re.sub(r"section_end:\d+:[^\r\n\u001b\[]+(?:\r|(?:\x1b\[0K))?", "", line)
 
-            if start_match:
-                section_name = start_match.group(2)
-                section_stack.append(section_name)
-                pending_section_start_id = section_name
-                # Strip only the marker
-                line = re.sub(r"section_start:\d+:[^\r\n\u001b\[]+(?:\r|(?:\x1b\[0K))?", "", line)
-
-            # 3. Simulate terminal carriage return \r
+            # 2. Simulate terminal carriage return \r
             if '\r' in line:
                 parts = line.split('\r')
                 res = parts[0]
@@ -80,41 +67,16 @@ class LogRenderer:
             line = re.sub(r"^\x1b\[0K", "", line)
             line = re.sub(r"^\+ ", "", line).strip()
 
-            # 4. Convert ANSI to HTML
+            # 3. Convert ANSI to HTML
             content_html = self._conv.convert(line, full=False)
             
-            # Skip empty lines, unless it's a section end which needs to pop the stack
+            # Skip empty lines
             if not content_html.strip():
-                if end_match and section_stack:
-                    section_stack.pop()
                 continue
-            
-            # Determine header status
-            is_section_header = False
-            if pending_section_start_id:
-                is_section_header = True
-                current_sid = pending_section_start_id
-                pending_section_start_id = None
-            else:
-                current_sid = section_stack[-1] if section_stack else None
-                
-            # Calculate depth
-            if is_section_header:
-                depth = max(0, len(section_stack) - 1)
-            else:
-                depth = len(section_stack)
 
             result.append(FormattedLogLine(
                 num=len(result) + 1,
-                timestamp=timestamp,
                 content_html=content_html,
-                is_section_header=is_section_header,
-                is_section_end=bool(end_match),
-                section_id=current_sid,
-                depth=depth
             ))
-
-            if end_match and section_stack:
-                section_stack.pop()
 
         return result
