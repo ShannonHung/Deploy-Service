@@ -194,6 +194,8 @@ LOG_VIEWER_HTML = """
         let currentOffset = 0;
         let timer = null;
         let isDarkMode = true;
+        let currentInterval = 5000;
+        const MAX_INTERVAL = 30000;
         
         const TERMINAL_STATUSES = ['success', 'failed', 'canceled', 'skipped', 'manual'];
 
@@ -237,7 +239,7 @@ LOG_VIEWER_HTML = """
                 jobStatusBadge.innerText = status.toUpperCase();
 
                 if (TERMINAL_STATUSES.includes(status)) {{
-                    if (timer) clearInterval(timer);
+                    if (timer) clearTimeout(timer);
                     timer = null;
                     pollingDot.style.animation = 'none';
                     pollingDot.style.opacity = '0.5';
@@ -246,16 +248,26 @@ LOG_VIEWER_HTML = """
                     syncStatus.innerText = `Syncing...`;
                 }}
 
-                if (data.lines.length === 0) return;
-                currentOffset = data.next_offset;
-
-                render(data.lines);
-                
-                // Auto-scroll logic (always on since we removed toggles)
-                container.scrollTop = container.scrollHeight;
+                if (data.lines.length === 0) {{
+                    // No new logs, backoff polling up to MAX_INTERVAL
+                    currentInterval = Math.min(currentInterval + 5000, MAX_INTERVAL);
+                }} else {{
+                    // New logs found, reset to fast polling
+                    currentInterval = 5000;
+                    currentOffset = data.next_offset;
+                    render(data.lines);
+                    
+                    // Auto-scroll logic (always on since we removed toggles)
+                    container.scrollTop = container.scrollHeight;
+                }}
             }} catch (e) {{
                 syncStatus.innerText = "Sync Failed";
                 console.error(e);
+            }} finally {{
+                // Schedule next poll if job is not finished
+                if (timer !== null) {{
+                    timer = setTimeout(refresh, currentInterval);
+                }}
             }}
         }}
 
@@ -284,8 +296,8 @@ LOG_VIEWER_HTML = """
             table.insertAdjacentHTML('beforeend', html);
         }}
 
-        refresh();
-        timer = setInterval(refresh, 5000);
+        // Initial setup
+        timer = setTimeout(refresh, 0); // Start immediately
     </script>
 </body>
 </html>
