@@ -12,7 +12,6 @@ LOG_VIEWER_HTML = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Job Log Viewer | {job_id}</title>
-    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
         /* CSS Variables - Default (Dark Theme) */
         :root {{
@@ -24,8 +23,16 @@ LOG_VIEWER_HTML = """
             --line-number-color: #484f58;
             --success-color: #238636;
             --hover-bg: rgba(255, 255, 255, 0.04);
-            /* Override Ansi2HTML Blue class for dark mode readability */
-            --ansi-blue: #79c0ff;
+            /* Override Ansi2HTML hardcoded colors for dark mode readability */
+            --ansi-black: #484f58;       /* Map pure black to gray */
+            --ansi-red: #ff7b72;
+            --ansi-green: #3fb950;
+            --ansi-yellow: #d29922;
+            --ansi-blue: #58a6ff;
+            --ansi-magenta: #bc8cff;
+            --ansi-cyan: #39c5cf;
+            --ansi-white: #b1bac4;
+            --ansi-bright-black: #8b949e;
         }}
 
         /* Light Theme overrides */
@@ -38,7 +45,16 @@ LOG_VIEWER_HTML = """
             --line-number-color: #8c959f;
             --success-color: #2da44e;
             --hover-bg: rgba(0, 0, 0, 0.04);
+            /* Light theme ANSI colors */
+            --ansi-black: #24292f;
+            --ansi-red: #cf222e;
+            --ansi-green: #116329;
+            --ansi-yellow: #9a6700;
             --ansi-blue: #0969da;
+            --ansi-magenta: #8250df;
+            --ansi-cyan: #1b7c83;
+            --ansi-white: #6e7781;
+            --ansi-bright-black: #57606a;
         }}
 
         * {{
@@ -50,7 +66,7 @@ LOG_VIEWER_HTML = """
         body {{
             background-color: var(--bg-color);
             color: var(--text-color);
-            font-family: 'Inter', sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             height: 100vh;
             display: flex;
             flex-direction: column;
@@ -111,7 +127,7 @@ LOG_VIEWER_HTML = """
         #log-container {{
             flex: 1;
             overflow: auto;
-            font-family: 'Fira Code', monospace;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
             font-size: 13px;
             background: var(--bg-color);
             padding-bottom: 20px;
@@ -212,7 +228,7 @@ LOG_VIEWER_HTML = """
 
         async function refresh() {{
             try {{
-                const res = await fetch(`/api/v1/deploy/jobs/{job_id}/trace/ui?offset=${{currentOffset}}`);
+                const res = await fetch(`/api/v1/deploy/jobs/{job_id}/trace/ui?offset=${{currentOffset}}&t=${{Date.now()}}`, {{ cache: 'no-store' }});
                 const json = await res.json();
                 if (!json.data || !json.data.lines) throw new Error("Invalid API response");
 
@@ -246,9 +262,17 @@ LOG_VIEWER_HTML = """
         function render(lines) {{
             let html = '';
             lines.forEach(l => {{
-                // Fix Ansi2HTML dark blue (#0000AA or #0000aa) which is unreadable on dark backgrounds
-                // We inject a class to let CSS variables handle the color
-                let content = l.content_html.replace(/color: #0000aa/gi, 'color: var(--ansi-blue)');
+                // Replace Ansi2HTML hardcoded hex colors with our themeable CSS variables
+                let content = l.content_html
+                    .replace(/color: #000000/gi, 'color: var(--ansi-black)')
+                    .replace(/color: #aa0000/gi, 'color: var(--ansi-red)')
+                    .replace(/color: #00aa00/gi, 'color: var(--ansi-green)')
+                    .replace(/color: #aaaa00/gi, 'color: var(--ansi-yellow)')
+                    .replace(/color: #0000aa/gi, 'color: var(--ansi-blue)')
+                    .replace(/color: #aa00aa/gi, 'color: var(--ansi-magenta)')
+                    .replace(/color: #00aaaa/gi, 'color: var(--ansi-cyan)')
+                    .replace(/color: #aaaaaa/gi, 'color: var(--ansi-white)')
+                    .replace(/color: #555555/gi, 'color: var(--ansi-bright-black)');
                 
                 html += `
                     <div class="log-line">
