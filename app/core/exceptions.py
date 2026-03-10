@@ -51,9 +51,15 @@ class BaseAppException(Exception):
         else:
             frame = inspect.currentframe()
             caller = frame.f_back if frame is not None else None
-            self.source_function = (
-                caller.f_code.co_qualname if caller is not None else "unknown"
-            )
+            if caller is not None and 'self' in caller.f_locals: 
+                src_func = caller.f_locals['self'].__class__.__name__ \
+                    + "." + caller.f_code.co_name
+            elif caller is not None:
+                src_func = caller.f_code.co_filename \
+                    + ":" + str(caller.f_lineno)
+            else:
+                src_func = "unknown"
+            self.source_function = src_func
 
     def log(self, logger: logging.Logger) -> None:
         """Emit a structured log entry at the appropriate level."""
