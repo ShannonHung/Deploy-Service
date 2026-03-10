@@ -119,9 +119,10 @@ LOG_VIEWER_HTML = """
             border-color: var(--line-number-color);
         }}
 
-        .status {{ font-size: 13px; color: var(--line-number-color); display: flex; align-items: center; gap: 10px; }}
+        .status {{ font-size: 13px; display: flex; align-items: center; gap: 10px; }}
+        #sync-status {{ color: var(--text-color); font-weight: 500; font-size: 12px; }}
         .dot {{ width: 8px; height: 8px; background: var(--success-color); border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }}
-        .job-status-badge {{ background: var(--hover-bg); border: 1px solid var(--border-color); padding: 3px 10px; border-radius: 12px; font-size: 11px; color: var(--text-color); font-weight: 600; }}
+        .job-status-badge {{ background: var(--hover-bg); border: 1px solid var(--border-color); padding: 3px 10px; border-radius: 12px; font-size: 11px; color: var(--text-color); font-weight: 600; text-transform: uppercase; }}
         @keyframes pulse {{ 0%, 100% {{ opacity: 0.4; }} 50% {{ opacity: 1; }} }}
 
         #log-container {{
@@ -132,7 +133,8 @@ LOG_VIEWER_HTML = """
             background: var(--bg-color);
             padding-bottom: 20px;
         }}
-
+        .log-table a {{ color: var(--ansi-blue); text-decoration: none; }}
+        .log-table a:hover {{ text-decoration: underline; }}
         .log-table {{ display: table; width: 100%; border-collapse: collapse; }}
         .log-line {{ display: table-row; line-height: 1.5; }}
         .log-line:hover {{ background: var(--hover-bg); }}
@@ -174,6 +176,7 @@ LOG_VIEWER_HTML = """
                 <span id="job-status" class="job-status-badge">...</span>
                 <span class="dot" id="polling-dot"></span>
                 <span id="sync-status">Connecting...</span>
+                <span id="interval-status" style="color: var(--text-color); background: var(--hover-bg); padding: 2px 6px; border-radius: 6px; font-weight: 600; font-size: 11px; margin-left: 5px; border: 1px solid var(--border-color);">(5s)</span>
             </div>
         </div>
     </header>
@@ -186,6 +189,7 @@ LOG_VIEWER_HTML = """
         const table = document.getElementById('log-table');
         const container = document.getElementById('log-container');
         const syncStatus = document.getElementById('sync-status');
+        const intervalStatus = document.getElementById('interval-status');
         const jobStatusBadge = document.getElementById('job-status');
         const themeBtn = document.getElementById('theme-btn');
         const themeIcon = document.getElementById('theme-icon');
@@ -244,8 +248,10 @@ LOG_VIEWER_HTML = """
                     pollingDot.style.animation = 'none';
                     pollingDot.style.opacity = '0.5';
                     syncStatus.innerText = `Finished`;
+                    intervalStatus.style.display = 'none';
                 }} else {{
                     syncStatus.innerText = `Syncing...`;
+                    intervalStatus.style.display = 'inline';
                 }}
 
                 if (data.lines.length === 0) {{
@@ -260,6 +266,10 @@ LOG_VIEWER_HTML = """
                     // Auto-scroll logic (always on since we removed toggles)
                     container.scrollTop = container.scrollHeight;
                 }}
+                
+                // Update the UI showing current interval frequency
+                intervalStatus.innerText = `(${{currentInterval / 1000}}s)`;
+                
             }} catch (e) {{
                 syncStatus.innerText = "Sync Failed";
                 console.error(e);

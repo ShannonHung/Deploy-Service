@@ -9,9 +9,10 @@ Kept separate from models.py to avoid bloating the auth models file.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
+import json
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.domain.models import ApiResponse
 
@@ -24,7 +25,14 @@ class PipelineVariable(BaseModel):
     """A single key-value variable passed to a GitLab pipeline."""
 
     key: str
-    value: str
+    value: Any
+
+    @field_validator("value", mode="before")
+    def stringify_complex_types(cls, v: Any) -> str:
+        """Convert objects/lists into JSON strings because GitLab expects strings."""
+        if isinstance(v, (dict, list)):
+            return json.dumps(v, separators=(',', ':'))
+        return str(v)
 
 
 class TriggerPipelineRequest(BaseModel):
