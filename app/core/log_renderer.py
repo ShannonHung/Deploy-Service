@@ -35,18 +35,18 @@ class LogRenderer:
             line = raw_line
 
             # 1. Remove timestamp prefixes if any (GitLab injects these)
-            line = _TS_REGEX.sub("", line).strip()
+            line = _TS_REGEX.sub("", line)
 
             # 2. Clean log multiplexer noise (e.g., 00O, 01O+, 0K, 00O+ )
             # Sometimes GitLab runner prepends \x1b[0K (clear line) before the multiplexer noise
             line = re.sub(r"^\x1b\[0K", "", line)
-            line = re.sub(r"^\d{1,2}[A-Za-z][\+\-]?\s*", "", line)
+            line = re.sub(r"^\d{1,2}[A-Za-z][\+\-]?\s?", "", line)
 
             # Strip section markers (but optionally keep the text)
             line = re.sub(r"section_start:\d+:[^\r\n\u001b\[]+(?:\r|(?:\x1b\[0K))?", "", line)
             line = re.sub(r"section_end:\d+:[^\r\n\u001b\[]+(?:\r|(?:\x1b\[0K))?", "", line)
 
-            # 2. Simulate terminal carriage return \r
+            # 3. Simulate terminal carriage return \r
             if '\r' in line:
                 parts = line.split('\r')
                 res = parts[0]
@@ -58,19 +58,19 @@ class LogRenderer:
                         res = p + res[len(p):]
                 line = res
 
-            line = line.strip()
-
             # Clean structural markers and any residual ANSI sequences
-            line = _MARKER_REGEX.sub("", line).strip()
+            # ONLY strip off the right side (trailing newlines/spaces) to preserve left indentation
+            line = line.rstrip()
+            line = _MARKER_REGEX.sub("", line)
             line = re.sub(r"^\+ \x1b\[0K", "+ ", line)
             line = re.sub(r"^\x1b\[0K\x1b\[\d+;\d+m", "", line)
             line = re.sub(r"^\x1b\[0K", "", line)
-            line = re.sub(r"^\+ ", "", line).strip()
+            line = re.sub(r"^\+ ", "", line)
 
-            # 3. Convert ANSI to HTML
+            # 4. Convert ANSI to HTML
             content_html = self._conv.convert(line, full=False)
             
-            # Skip empty lines
+            # Skip lines that are completely empty (no html, no whitespace)
             if not content_html.strip():
                 continue
 
