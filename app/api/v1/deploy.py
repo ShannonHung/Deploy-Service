@@ -30,6 +30,7 @@ from app.domain.pipeline_models import (
     TriggerPipelineRequest,
     FormattedLogResponse,
 )
+from app.repositories.gitlab_auth_repository import GitlabAuthRepository
 from app.repositories.gitlab_pipeline_repository import GitlabPipelineRepository
 from app.services.deploy_service import DeployService
 
@@ -41,13 +42,27 @@ router = APIRouter(
 )
 
 
-def _get_deploy_service() -> DeployService:
-    """Build DeployService backed by a live GitLab client."""
+def _get_deploy_service(project_id: int | None = None) -> DeployService:
+    """Build DeployService with resolved project/token mapping."""
     settings = get_settings()
+    target_project_id = project_id or settings.GITLAB_PROJECT_ID
+    target_token = settings.GITLAB_TOKEN
+
+    if project_id and project_id != settings.GITLAB_PROJECT_ID:
+        auth_repo = GitlabAuthRepository(settings.GITLAB_AUTH_JSON_PATH)
+        token = auth_repo.get_token_by_project_id(project_id)
+        if token:
+            target_token = token
+        else:
+            _logger.warning(
+                "Project ID %s not found in auth mapping, falling back to default token.",
+                project_id,
+            )
+
     repo = GitlabPipelineRepository(
         url=settings.GITLAB_URL,
-        token=settings.GITLAB_TOKEN,
-        project_id=settings.GITLAB_PROJECT_ID,
+        token=target_token,
+        project_id=target_project_id,
     )
     return DeployService(repo)
 
@@ -72,10 +87,11 @@ async def trigger_pipeline(
     request: Request,
     action: str = Query(..., description="Pipeline EXECUTION variable value (e.g. test-deploy)"),
     ref_name: str = Query(default="main", description="Git branch or tag to run pipeline on"),
+    project_id: int | None = Query(None, description="GitLab project ID"),
     body: TriggerPipelineRequest = TriggerPipelineRequest(),
-    svc: DeployService = Depends(_get_deploy_service),
     current_user: Annotated[User, Depends(get_current_user(["deploy_api"]))] = None,
 ) -> ApiResponse[PipelineData]:
+    svc = _get_deploy_service(project_id)
     data = await svc.trigger_pipeline(
         action=action,
         ref=ref_name,
@@ -101,10 +117,11 @@ async def check_running(
     request: Request,
     action: str = Query(..., description="EXECUTION variable value to match"),
     ref_name: str = Query(default="main", description="Branch or tag to filter on"),
+    project_id: int | None = Query(None, description="GitLab project ID"),
     body: TriggerPipelineRequest = TriggerPipelineRequest(),
-    svc: DeployService = Depends(_get_deploy_service),
     current_user: Annotated[User, Depends(get_current_user(["deploy_api"]))] = None,
 ) -> ApiResponse[RunningPipelinesData]:
+    svc = _get_deploy_service(project_id)
     data = await svc.find_duplicate_pipelines(
         action=action,
         ref=ref_name,
@@ -124,9 +141,10 @@ async def check_running(
 async def get_pipeline(
     request: Request,
     pipeline_id: int,
-    svc: DeployService = Depends(_get_deploy_service),
+    project_id: int | None = Query(None, description="GitLab project ID"),
     current_user: Annotated[User, Depends(get_current_user(["deploy_api"]))] = None,
 ) -> ApiResponse[PipelineData]:
+    svc = _get_deploy_service(project_id)
     data = await svc.get_pipeline(pipeline_id)
     return ApiResponse(data=data, request_id=_request_id(request))
 
@@ -142,9 +160,10 @@ async def get_pipeline(
 async def cancel_pipeline(
     request: Request,
     pipeline_id: int,
-    svc: DeployService = Depends(_get_deploy_service),
+    project_id: int | None = Query(None, description="GitLab project ID"),
     current_user: Annotated[User, Depends(get_current_user(["deploy_api"]))] = None,
 ) -> ApiResponse[PipelineData]:
+    svc = _get_deploy_service(project_id)
     data = await svc.cancel_pipeline(pipeline_id)
     return ApiResponse(data=data, request_id=_request_id(request))
 
@@ -160,9 +179,10 @@ async def cancel_pipeline(
 async def retry_pipeline(
     request: Request,
     pipeline_id: int,
-    svc: DeployService = Depends(_get_deploy_service),
+    project_id: int | None = Query(None, description="GitLab project ID"),
     current_user: Annotated[User, Depends(get_current_user(["deploy_api"]))] = None,
 ) -> ApiResponse[PipelineData]:
+    svc = _get_deploy_service(project_id)
     data = await svc.retry_pipeline(pipeline_id)
     return ApiResponse(data=data, request_id=_request_id(request))
 
@@ -176,9 +196,10 @@ async def retry_pipeline(
 )
 async def get_job_trace(
     job_id: int,
-    svc: DeployService = Depends(_get_deploy_service),
+    project_id: int | None = Query(None, description="GitLab project ID"),
 ) -> str:
     """Returns raw text trace directly."""
+    svc = _get_deploy_service(project_id)
     status, trace = await svc.get_job_trace(job_id)
     return trace
 
@@ -193,8 +214,9 @@ async def get_formatted_job_trace(
     request: Request,
     job_id: int,
     offset: int = 0,
-    svc: DeployService = Depends(_get_deploy_service),
+    project_id: int | None = Query(None, description="GitLab project ID"),
 ) -> ApiResponse[FormattedLogResponse]:
+    svc = _get_deploy_service(project_id)
     data = await svc.get_formatted_job_trace(job_id, offset)
     return ApiResponse(data=data, request_id=_request_id(request))
 
