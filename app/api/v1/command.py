@@ -54,8 +54,9 @@ async def execute_command_endpoint(
     body: CommandExecutionRequest,
     current_user: User = Depends(get_current_user(["command_api"])),
 ) -> ApiResponse[CommandExecutionResponse]:
-    response_data = await CommandService.execute_command(current_user.account, body)
-    return ApiResponse(data=response_data, request_id=_request_id(request))
+    req_id = _request_id(request)
+    response_data = await CommandService.execute_command(current_user.account, req_id, body)
+    return ApiResponse(data=response_data, request_id=req_id)
 
 @router.get(
     "/execution/{command_id}",

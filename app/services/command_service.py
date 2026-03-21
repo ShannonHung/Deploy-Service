@@ -17,6 +17,12 @@ settings = get_settings()
 
 running_commands_pool: Dict[str, RunningCommandEntry] = {}
 command_results_pool: Dict[str, CommandExecutionResponse] = {}
+MAX_RESULTS_POOL_SIZE: int = 200
+
+def _prune_results_pool():
+    while len(command_results_pool) > MAX_RESULTS_POOL_SIZE:
+        oldest_key = next(iter(command_results_pool))
+        command_results_pool.pop(oldest_key, None)
 
 class CommandExecutionException(Exception):
     pass
@@ -89,7 +95,7 @@ class CommandService:
         return cmd_config
 
     @staticmethod
-    async def execute_command(username: str, req: CommandExecutionRequest) -> CommandExecutionResponse:
+    async def execute_command(username: str, request_id: str, req: CommandExecutionRequest) -> CommandExecutionResponse:
         try:
             whitelist = CommandService._load_user_whitelist(username)
             cmd_config = CommandService._validate_and_build_pipeline(req, whitelist)
@@ -129,9 +135,11 @@ class CommandService:
             try:
                 import shlex
                 cmd_line = pipeline_cmds[0]
-                await conn.run(shlex.join(cmd_line), check=False)
-            except Exception:
-                pass
+                cmd_str_preview = shlex.join(cmd_line)
+                logger.info(f"[ReqID: {request_id}] User '{username}' dispatching fire-and-forget command '{req.command_name}': {cmd_str_preview}")
+                await conn.run(cmd_str_preview, check=False)
+            except Exception as e:
+                logger.error(f"[ReqID: {request_id}] User '{username}' fire-and-forget command '{req.command_name}' failed: {str(e)}")
             finally:
                 conn.close()
             return CommandExecutionResponse(status="disconnected_expected", message="Command dispatched.")
@@ -149,13 +157,16 @@ class CommandService:
 
         timeout = req.option.timeout_seconds if req.option.timeout_seconds else settings.COMMAND_DEFAULT_TIMEOUT
         
-        task = loop.create_task(CommandService._run_pipeline_task(command_id, conn, pipeline_cmds, timeout))
+        import shlex
+        cmd_str_preview = " | ".join(shlex.join(cmd) for cmd in pipeline_cmds)
+        logger.info(f"[ReqID: {request_id}] [CmdID: {command_id}] User '{username}' initiating command '{req.command_name}' ({cmd_str_preview}) with timeout {timeout}s.")
+        task = loop.create_task(CommandService._run_pipeline_task(command_id, request_id, username, req.command_name, cmd_str_preview, conn, pipeline_cmds, timeout))
         entry.task = task
 
         return CommandExecutionResponse(status="running", command_id=command_id)
 
     @staticmethod
-    async def _run_pipeline_task(command_id: str, conn, pipeline_cmds, timeout_seconds):
+    async def _run_pipeline_task(command_id: str, request_id: str, username: str, command_name: str, cmd_str_preview: str, conn, pipeline_cmds, timeout_seconds):
         entry = running_commands_pool.get(command_id)
         if not entry:
             return
@@ -197,6 +208,8 @@ class CommandService:
 
                 entry.processes = processes
                 entry.pgids = pgids
+                
+                logger.info(f"[ReqID: {request_id}] [CmdID: {command_id}] Command '{command_name}' ({cmd_str_preview}) PGIDs assigned: {pgids}")
 
                 # Wait for any prior pipeline steps to finish
                 for p in processes[:-1]:
@@ -208,7 +221,7 @@ class CommandService:
             
             returncode, output = await asyncio.wait_for(exec_pipe(), timeout=timeout_seconds)
             
-            logger.info(f"Command {command_id} finished. Code: {returncode}")
+            logger.info(f"[ReqID: {request_id}] [CmdID: {command_id}] User '{username}' command '{command_name}' finished. Exit Status: {returncode}")
             status = "success" if returncode == 0 else "failed"
             command_results_pool[command_id] = CommandExecutionResponse(
                 status=status,
@@ -216,22 +229,25 @@ class CommandService:
                 exit_status=returncode,
                 output=output.decode('utf-8') if isinstance(output, bytes) else str(output)
             )
+            _prune_results_pool()
             
         except asyncio.TimeoutError:
-            logger.warning(f"Command {command_id} timed out.")
+            logger.warning(f"[ReqID: {request_id}] [CmdID: {command_id}] User '{username}' command '{command_name}' timed out after {timeout_seconds}s.")
             await CommandService.kill_command(command_id)
             command_results_pool[command_id] = CommandExecutionResponse(
                 status="failed",
                 command_id=command_id,
                 message="Command timed out and was killed."
             )
+            _prune_results_pool()
         except Exception as e:
-            logger.error(f"Command {command_id} failed: {str(e)}")
+            logger.error(f"[ReqID: {request_id}] [CmdID: {command_id}] User '{username}' command '{command_name}' failed: {str(e)}")
             command_results_pool[command_id] = CommandExecutionResponse(
                 status="failed",
                 command_id=command_id,
                 message=str(e)
             )
+            _prune_results_pool()
         finally:
             conn.close()
             running_commands_pool.pop(command_id, None)

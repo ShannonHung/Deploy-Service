@@ -37,25 +37,27 @@ Content-Type: application/json
     "arguments": {}
 }
 
-### Poll Execution Status
-@my_command_id = {{my_command.response.body.data.command_id}}
-
-GET {{base_url}}/api/v1/command/execution/{{my_command_id}}
-Authorization: Bearer {{token}}
-
 ### Execute pwd Command
+# @name my_command
 POST {{base_url}}/api/v1/command/execution
 Authorization: Bearer {{token}}
 Content-Type: application/json
 
 {
-    "command_name": "pwd",
+    "command_name": "sleep",
     "ip_address": "localhost",
     "ssh_config": "cluster1",
     "option": {
-        "timeout_seconds": 30
+        "timeout_seconds": 60
     },
     "arguments": {
-        "key_word": "ssh"
+        "time": "180"
     }
 }
+
+
+### Poll Execution Status
+@my_command_id = {{my_command.response.body.data.command_id}}
+
+GET {{base_url}}/api/v1/command/execution/{{my_command_id}}
+Authorization: Bearer {{token}}
