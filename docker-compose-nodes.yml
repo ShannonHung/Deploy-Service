@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  node1:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    container_name: ssh_node_1
+    ports:
+      - "2222:22"
+    volumes:
+      - ./data/ssh_keys/ca.pub:/etc/ssh/ca.pub:ro
+      - ./data/ssh_keys/client_key.pub:/root/.ssh/authorized_keys:ro
+
+  node2:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    container_name: ssh_node_2
+    ports:
+      - "2223:22"
+    volumes:
+      - ./data/ssh_keys/ca.pub:/etc/ssh/ca.pub:ro
+      - ./data/ssh_keys/client_key.pub:/root/.ssh/authorized_keys:ro

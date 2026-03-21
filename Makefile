@@ -32,6 +32,10 @@ help:
 install:
 	$(UV) sync --group dev
 
+.PHONY: setup-ssh-nodes
+setup-ssh-nodes:
+	chmod +x scripts/setup_ssh_nodes.sh && ./scripts/setup_ssh_nodes.sh
+
 # ─── Run ─────────────────────────────────────────────────────────────────────
 # start: 只讀 .env（不設 APP_ENV，適合生產部署只有單一 .env 的情境）
 .PHONY: start

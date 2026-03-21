@@ -1,0 +1,46 @@
+{
+  "name": "admin",
+  "allow_commands": [
+    {
+      "command_name": "reboot",
+      "description": "reboot",
+      "disconnects_ssh": true,
+      "killable": false,
+      "pipeline": [{"command": ["reboot"]}],
+      "arguments": []
+    },
+    {
+      "command_name": "sleep",
+      "description": "sleep",
+      "disconnects_ssh": false,
+      "killable": true,
+      "pipeline": [{"command": ["sleep", "{time}"]}],
+      "arguments": [{"name": "time", "type": "int", "validation_regex": "^[0-9]+$"}]
+    },
+    {
+      "command_name": "list_file",
+      "description": "list file",
+      "disconnects_ssh": false,
+      "killable": true,
+      "pipeline": [
+        {"command": ["ls", "-al"]},
+        {"command": ["grep", "{key_word}"]}
+      ],
+      "arguments": [{"name": "key_word", "type": "string", "validation_regex": "^[a-zA-Z0-9._-]+$"}]
+    },
+    {
+      "command_name": "whoami",
+      "description": "whoami",
+      "disconnects_ssh": false,
+      "killable": true,
+      "pipeline": [
+        {
+          "command": [
+            "whoami"
+          ]
+        }
+      ],
+      "arguments": []
+    }
+  ]
+}

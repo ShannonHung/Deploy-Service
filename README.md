@@ -144,6 +144,48 @@ def deploy(user: User = Depends(get_current_user(["deploy_api"]))):
 
 ---
 
+## 測試環境與 SSH Nodes 快速架設
+
+本專案配置了一個專屬的本地開發節點叢集 (基於 ubuntu 的 ssh_node_1 與 ssh_node_2) 來讓你安全的測試 SSH Command API (`/api/v1/command/execution`)。
+
+### 1. 初始化與啟動節點
+
+透過下方提供的單一指令，能一鍵完成：Ed25519 憑證 (CA) 與金鑰的生成、Base64 加密注入 `.json` 配置檔，以及背景啟動 Docker 容器。
+
+```bash
+make setup-ssh-nodes
+```
+
+*執行完成後，Node 1 會映射到 `localhost:2222`，Node 2 會映射到 `localhost:2223`。*
+
+### 2. 手動連線進入 Node 內部除錯
+
+你可以自由選擇「透過產生好的 SSH 金鑰登入」或是「直接透過 Docker 掛載進去」。以下為操作指令範例：
+
+#### 方式一：使用方才生成的 SSH 金鑰直接連線 (推薦)
+藉由剛剛產生的私鑰登入，可以確保憑證驗證與服務行為的一致性。
+
+**進入 Node 1 (Port 2222，使用 CA 憑證驗證)：**
+```bash
+ssh -i data/ssh_keys/client_ca -p 2222 root@localhost -o StrictHostKeyChecking=no
+```
+*(補充：SSH 客戶端會自動在該目錄配對同名的 `client_ca-cert.pub` 作為憑證登入)*
+
+**進入 Node 2 (Port 2223，使用一般私鑰驗證)：**
+```bash
+ssh -i data/ssh_keys/client_key -p 2223 root@localhost -o StrictHostKeyChecking=no
+```
+
+#### 方式二：透過 Docker Exec 繞過 SSH 直接進入
+如果你只是單純想查看背景執行狀態，可以直接用 Docker 終端機掛載進入：
+```bash
+docker exec -it ssh_node_1 bash
+# 或者
+docker exec -it ssh_node_2 bash
+```
+
+---
+
 ## 執行測試
 
 ```bash

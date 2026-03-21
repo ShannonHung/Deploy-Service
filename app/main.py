@@ -33,6 +33,7 @@ from app.core.logging import RequestIdMiddleware, setup_logging
 from app.domain.models import OAuth2TokenResponse
 from app.repositories.json_user_repository import JsonUserRepository
 from app.services.auth_service import AuthService
+from app.services.command_service import CommandService
 
 _logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _logger.info(
         "Shutting down %s — goodbye.", settings.APP_NAME
     )
+    await CommandService.shutdown_gracefully()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -20,11 +20,13 @@ from fastapi import APIRouter
 
 from app.api.v1.auth import router as auth_router
 from app.api.v1.deploy import router as deploy_router
+from app.api.v1.command import router as command_router
 
 # ── /api/v1 sub-router ────────────────────────────────────────────────────────
 v1_router = APIRouter(prefix="/api/v1")
 v1_router.include_router(auth_router)    # mounts at /api/v1/auth/...
 v1_router.include_router(deploy_router)  # mounts at /api/v1/deploy/...
+v1_router.include_router(command_router) # mounts at /api/v1/command/...
 
 # ── Root router (aggregates everything) ───────────────────────────────────────
 api_router = APIRouter()
