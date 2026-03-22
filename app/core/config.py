@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     COMMAND_CONFIG_DIR: str = "data"
     COMMAND_DEFAULT_TIMEOUT: int = 30
     COMMAND_KILL_GRACE_SECONDS: int = 2
+    COMMAND_MAX_CONCURRENCY: int = 20
+    COMMAND_MAX_RUNNING: int = 50
 
     model_config = SettingsConfigDict(
         # Load order: .env (base) → .env.{APP_ENV} (env-specific overrides).

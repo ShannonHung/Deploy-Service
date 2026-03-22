@@ -28,12 +28,19 @@ COORDINATION_ID_HEADER = "X-Coordination-ID"
 # ──────────────────────────────────────────────────────────────────────────────
 
 class RequestIdFilter(logging.Filter):
-    """Logging filter that adds ``request_id`` to log records."""
+    """Logging filter that adds ``request_id``, ``username``, and ``command_id`` to log records."""
 
     _current_request_id: str = "N/A"
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = self._current_request_id  # type: ignore[attr-defined]
+        # Provide defaults so the formatter never raises on missing attributes.
+        # Commands that pass extra={"username": ..., "command_id": ...} will
+        # override these; all other log lines simply show "-".
+        if not hasattr(record, "username"):
+            record.username = "-"  # type: ignore[attr-defined]
+        if not hasattr(record, "command_id"):
+            record.command_id = "-"  # type: ignore[attr-defined]
         return True
 
 
@@ -96,6 +103,7 @@ def setup_logging(log_level: str = "INFO") -> None:
     handler.setFormatter(
         logging.Formatter(
             fmt="%(asctime)s | %(levelname)-8s | req=%(request_id)s | "
+                "user=%(username)s | cmd=%(command_id)s | "
                 "%(name)s:%(lineno)d | %(message)s",
             datefmt="%Y-%m-%dT%H:%M:%S",
         )

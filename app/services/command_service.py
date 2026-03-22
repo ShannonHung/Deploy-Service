@@ -21,6 +21,15 @@ running_commands_pool: Dict[str, RunningCommandEntry] = {}
 command_results_pool: Dict[str, CommandExecutionResponse] = {}
 MAX_RESULTS_POOL_SIZE: int = 200
 
+_execution_semaphore: Optional[asyncio.Semaphore] = None
+
+def _get_semaphore() -> asyncio.Semaphore:
+    """Lazily initialise the concurrency semaphore (must be called inside a running event loop)."""
+    global _execution_semaphore
+    if _execution_semaphore is None:
+        _execution_semaphore = asyncio.Semaphore(settings.COMMAND_MAX_CONCURRENCY)
+    return _execution_semaphore
+
 def _prune_results_pool():
     """Enforce LRU eviction on command_results_pool.
 
@@ -394,7 +403,8 @@ class CommandService:
 
         async def _timeout_wrapper():
             try:
-                await asyncio.wait_for(_execution_task(), timeout=timeout_seconds)
+                async with _get_semaphore():
+                    await asyncio.wait_for(_execution_task(), timeout=timeout_seconds)
             except asyncio.TimeoutError:
                 logger.warning(
                     f"Command '{context.command_name}' timed out after {timeout_seconds}s.",
@@ -420,6 +430,19 @@ class CommandService:
         return CommandExecutionResponse(status="running", command_id=command_id)
 
     @staticmethod
+    def _check_capacity(username: str, request_id: str) -> Optional[CommandExecutionResponse]:
+        """Return a failed response if the running pool has reached its limit, otherwise None."""
+        if len(running_commands_pool) >= settings.COMMAND_MAX_RUNNING:
+            logger.warning(
+                f"Max running commands reached ({settings.COMMAND_MAX_RUNNING}), rejecting new request.",
+                extra={"request_id": request_id, "username": username}
+            )
+            return CommandExecutionResponse.failed(
+                f"Too many running commands (limit: {settings.COMMAND_MAX_RUNNING}). Please try again later."
+            )
+        return None
+
+    @staticmethod
     async def execute_command(username: str, request_id: str, req: CommandExecutionRequest) -> CommandExecutionResponse:
         """Top-level orchestrator for SSH command execution.
 
@@ -431,6 +454,10 @@ class CommandService:
 
         Never raises; all failures are returned as ``CommandExecutionResponse.failed()``.
         """
+        rejected = CommandService._check_capacity(username, request_id)
+        if rejected:
+            return rejected
+
         try:
             context = CommandService._prepare_execution(username, request_id, req)
         except CommandExecutionException as e:

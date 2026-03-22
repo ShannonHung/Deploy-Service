@@ -14,8 +14,9 @@
 6. [Fire-and-Forget 斷線指令（如 Reboot）](#6-fire-and-forget-斷線指令如-reboot)
 7. [Running Pool 與 Results Pool](#7-running-pool-與-results-pool)
 8. [Graceful Shutdown（優雅關機）](#8-graceful-shutdown優雅關機)
-9. [結構化日誌](#9-結構化日誌)
-10. [附錄：核心檔案索引](#10-附錄核心檔案索引)
+9. [Concurrency Protection（並行保護）](#9-concurrency-protection並行保護)
+10. [結構化日誌](#10-結構化日誌)
+11. [附錄：核心檔案索引](#11-附錄核心檔案索引)
 
 ---
 
@@ -268,7 +269,7 @@ Timeout 觸發
 ┌───────────────────┐
 │ kill -TERM -{pgid}│  ← 軟殺：發送 SIGTERM，讓進程有機會優雅關閉
 └─────────┬─────────┘
-          │ 等待 2 秒
+          │ 等待 COMMAND_KILL_GRACE_SECONDS（預設 2 秒）
           ▼
     ┌──────────┐
     │ 還活著？  │──否──▶ 結束，進程已自行終止
@@ -283,7 +284,7 @@ Timeout 觸發
 ```python
 # 軟殺
 await conn.run(f"kill -TERM -{pgid}", check=False)
-await asyncio.sleep(2)
+await asyncio.sleep(settings.COMMAND_KILL_GRACE_SECONDS)  # 可透過環境變數調整
 
 # 檢查是否還活著
 res = await conn.run(f"kill -0 -{pgid}", check=False)
@@ -394,7 +395,69 @@ async def shutdown_gracefully():
 
 ---
 
-## 9. 結構化日誌
+## 9. Concurrency Protection（並行保護）
+
+當大量請求同時湧入時，每個指令都會建立獨立的 SSH 連線。如果不加以控制，可能導致：
+- File descriptor 耗盡
+- 遠端 SSH daemon 的 MaxSessions 上限
+- Event loop 過載
+
+系統透過兩道防護機制來確保穩定性：
+
+### 防護 1：Running Pool 上限（Hard Ceiling）
+
+在 `execute_command()` 入口處，檢查當前 `running_commands_pool` 的大小。若已達上限，**直接拒絕新請求**，不會建立 SSH 連線：
+
+```python
+if len(running_commands_pool) >= settings.COMMAND_MAX_RUNNING:
+    return CommandExecutionResponse.failed(
+        "Too many running commands (limit: 50). Please try again later."
+    )
+```
+
+### 防護 2：Semaphore 並行限制（Soft Throttle）
+
+即使有 50 個指令被接受進入 pool，**同一時間實際佔用 SSH 連線執行的數量**由 `asyncio.Semaphore` 控制：
+
+```python
+async def _timeout_wrapper():
+    async with _get_semaphore():         # ← 最多同時 20 個
+        await asyncio.wait_for(_execution_task(), timeout=timeout_seconds)
+```
+
+超出 Semaphore 上限的 task 會在記憶體中等待（不佔 SSH 連線），待其他 task 完成後自動取得執行權。
+
+### 兩道防護的關係
+
+```
+請求進入
+  │
+  ▼
+┌──────────────────────────────────┐
+│ running_commands_pool < 50？     │──否──▶ 回傳 failed（拒絕）
+└──────────┬───────────────────────┘
+           │ 是（進入 pool）
+           ▼
+┌──────────────────────────────────┐
+│ Semaphore 有空位（< 20）？       │──否──▶ 排隊等待（不佔 SSH）
+└──────────┬───────────────────────┘
+           │ 是
+           ▼
+     實際執行 SSH 指令
+```
+
+### 環境變數配置
+
+| 變數 | 預設值 | 說明 |
+|---|---|---|
+| `COMMAND_MAX_RUNNING` | `50` | `running_commands_pool` 的最大容量，超過直接拒絕 |
+| `COMMAND_MAX_CONCURRENCY` | `20` | 同一時間實際並行執行 SSH 指令的上限 |
+| `COMMAND_KILL_GRACE_SECONDS` | `2` | 軟殺後等待進程自行終止的秒數 |
+| `COMMAND_DEFAULT_TIMEOUT` | `30` | 未指定 timeout 時的預設逾時秒數 |
+
+---
+
+## 10. 結構化日誌
 
 所有日誌記錄使用 `extra` 字典攜帶結構化的上下文資訊，支援後續日誌收集系統（如 ELK Stack、Datadog）做 Label 篩選：
 
@@ -416,10 +479,11 @@ logger.info(
 - 逾時與進程獵殺
 - 軟殺/硬殺每一步的結果
 - Fire-and-forget 連線斷開偵測
+- 並行上限拒絕事件
 
 ---
 
-## 10. 附錄：核心檔案索引
+## 11. 附錄：核心檔案索引
 
 | 檔案 | 職責 |
 |---|---|
@@ -427,6 +491,7 @@ logger.info(
 | `app/domain/command.py` | Domain Models：`SSHConnectionConfig`、`RunningCommandEntry`、`ExecutionContext` |
 | `app/api/v1/schemas/command.py` | API Schema：Request/Response 模型、Factory Methods |
 | `app/api/v1/command.py` | API Routes：`/execution`、`/execution/{id}`、`/info` |
+| `app/core/config.py` | Settings：環境變數配置（含並行限制參數） |
 | `app/repositories/ssh_auth_repository.py` | SSH 認證工廠（支援 Key / Certificate） |
 | `app/repositories/ssh_key_auth_repository.py` | SSH Key 認證器（Base64 解碼） |
 | `app/repositories/ssh_cert_auth_repository.py` | SSH Certificate 認證器（Base64 解碼） |
