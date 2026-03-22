@@ -2,7 +2,8 @@ import logging
 from fastapi import APIRouter, Depends, Request, HTTPException
 
 from app.api.v1.schemas.command import CommandExecutionRequest, CommandExecutionResponse, UserCommandWhitelist, CommandWhitelistConfig
-from app.services.command_service import CommandService, CommandExecutionException
+from app.services.command_service import CommandService
+from app.core.exceptions import CommandExecutionException
 from app.core.dependencies import get_current_user
 from app.domain.models import User, ApiResponse
 

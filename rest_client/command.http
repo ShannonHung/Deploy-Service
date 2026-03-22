@@ -51,8 +51,42 @@ Content-Type: application/json
         "timeout_seconds": 60
     },
     "arguments": {
-        "time": "180"
+        "time": "333"
     }
+}
+
+### Execute pwd Command
+# @name my_command
+POST {{base_url}}/api/v1/command/execution
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "command_name": "cat",
+    "ip_address": "localhost",
+    "ssh_config": "cluster1",
+    "option": {
+        "timeout_seconds": 60
+    },
+    "arguments": {
+        "key_word": "333"
+    }
+}
+
+### Execute test_injection Command
+# @name my_command
+POST {{base_url}}/api/v1/command/execution
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "command_name": "reboot",
+    "ip_address": "localhost",
+    "ssh_config": "cluster1",
+    "option": {
+        "timeout_seconds": 60
+    },
+    "arguments": {}
 }
 
 

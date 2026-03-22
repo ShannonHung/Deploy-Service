@@ -37,3 +37,11 @@ class CommandExecutionResponse(BaseModel):
     message: str = ""
     exit_status: Optional[int] = None
     output: Optional[str] = None
+
+    @classmethod
+    def failed(cls, message: str, exit_status: Optional[int] = None, output: Optional[str] = None, command_id: Optional[str] = None) -> "CommandExecutionResponse":
+        return cls(status="failed", message=message, exit_status=exit_status, output=output, command_id=command_id)
+
+    @classmethod
+    def success(cls, command_id: str, exit_status: int, output: str) -> "CommandExecutionResponse":
+        return cls(status="success", command_id=command_id, exit_status=exit_status, output=output)

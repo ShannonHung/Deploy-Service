@@ -133,6 +133,14 @@ class ConflictException(BaseAppException):
     log_level = logging.WARNING
 
 
+class CommandExecutionException(BaseAppException):
+    """Raised for validation or system setup failures before or during execution."""
+
+    http_status = 400
+    error_code = "COMMAND_EXECUTION_ERROR"
+    log_level = logging.WARNING
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Global exception handlers
 # ──────────────────────────────────────────────────────────────────────────────

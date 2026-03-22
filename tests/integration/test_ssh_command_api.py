@@ -54,4 +54,5 @@ def test_execute_reboot_fire_and_forget(client: TestClient):
     )
     assert resp.status_code == 200
     data = resp.json()["data"]
-    assert data["status"] == "disconnected_expected"
+    assert data["status"] == "failed"
+    assert "System has not been booted with systemd" in data["output"]

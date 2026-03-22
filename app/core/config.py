@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # ── SSH Command API ───────────────────────────────────────────────────────
     COMMAND_CONFIG_DIR: str = "data"
     COMMAND_DEFAULT_TIMEOUT: int = 30
+    COMMAND_KILL_GRACE_SECONDS: int = 2
 
     model_config = SettingsConfigDict(
         # Load order: .env (base) → .env.{APP_ENV} (env-specific overrides).
