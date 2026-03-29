@@ -52,7 +52,7 @@ Content-Type: application/json
     "username": "root",
     "ssh_config": "cluster1",
     "option": {
-        "timeout_seconds": 60
+        "timeout_seconds": 600
     },
     "arguments": {
         "time": "333"
@@ -66,7 +66,7 @@ Authorization: Bearer {{token}}
 Content-Type: application/json
 
 {
-    "command_name": "cat",
+    "command_name": "list_file",
     "host": "localhost",
     "port": 2222,
     "username": "root",
@@ -75,7 +75,8 @@ Content-Type: application/json
         "timeout_seconds": 60
     },
     "arguments": {
-        "key_word": "333"
+        "key_word": ".*",
+        "key_word2": "bash"
     }
 }
 

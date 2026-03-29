@@ -97,7 +97,8 @@ class CommandService:
             command_id=state.command_id,
             exit_status=state.exit_code,
             output=state.output,
-            message=state.message or ""
+            message=state.message or "",
+            exec_command=state.exec_command
         )
 
     def get_user_commands(self, username: str) -> UserCommandWhitelist:
@@ -261,6 +262,7 @@ class CommandService:
                 return CommandExecutionResponse(
                     status=CommandStatus.SUCCESS.value,
                     message=f"Command dispatched and connection to {target} dropped as expected.",
+                    exec_command=cmd_str_preview,
                 )
             
             # Connection is still alive — the command did NOT cause a disconnect.
@@ -412,6 +414,8 @@ class CommandService:
 
         timeout_seconds = context.raw_request.option.timeout_seconds if context.raw_request.option.timeout_seconds else settings.COMMAND_DEFAULT_TIMEOUT
         
+        cmd_str_preview = " | ".join(shlex.join(cmd) for cmd in context.pipeline_cmds)
+        
         state = CommandState(
             command_id=command_id,
             status=CommandStatus.RUNNING,
@@ -421,12 +425,11 @@ class CommandService:
             ssh_config=context.raw_request.ssh_config,
             request_id=context.request_id,
             killable=context.cmd_config.killable,
-            pgids=[]
+            pgids=[],
+            exec_command=cmd_str_preview
         )
         await self.repo.save(state, timeout_seconds + 30)
 
-        cmd_str_preview = " | ".join(shlex.join(cmd) for cmd in context.pipeline_cmds)
-        
         logger.info(
             f"Initiating command '{context.command_name}' ({cmd_str_preview}) to {context.raw_request.host}:{context.raw_request.port} with timeout {timeout_seconds}s.",
             extra={"request_id": context.request_id, "username": context.username, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port}

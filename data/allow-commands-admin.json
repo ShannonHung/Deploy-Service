@@ -1,14 +1,24 @@
 {
   "name": "admin",
-  "allow_hosts": [".*"],
-  "deny_hosts": ["10\\.0\\..*"],
+  "allow_hosts": [
+    ".*"
+  ],
+  "deny_hosts": [
+    "10\\.0\\..*"
+  ],
   "allow_commands": [
     {
       "command_name": "reboot",
       "description": "reboot",
       "disconnects_ssh": true,
       "killable": false,
-      "pipeline": [{"command": ["reboot"]}],
+      "pipeline": [
+        {
+          "command": [
+            "reboot"
+          ]
+        }
+      ],
       "arguments": []
     },
     {
@@ -16,8 +26,36 @@
       "description": "sleep",
       "disconnects_ssh": false,
       "killable": true,
-      "pipeline": [{"command": ["sleep", "{time}"]}],
-      "arguments": [{"name": "time", "type": "int", "validation_regex": "^[0-9]+$"}]
+      "pipeline": [
+        {
+          "command": [
+            "sleep",
+            "{time}"
+          ]
+        }
+      ],
+      "arguments": [
+        {
+          "name": "time",
+          "type": "int",
+          "validation_regex": "^[0-9]+$"
+        }
+      ]
+    },
+    {
+      "command_name": "list_file_all",
+      "description": "list file",
+      "disconnects_ssh": false,
+      "killable": true,
+      "pipeline": [
+        {
+          "command": [
+            "ls",
+            "-al"
+          ]
+        }
+      ],
+      "arguments": []
     },
     {
       "command_name": "list_file",
@@ -25,10 +63,37 @@
       "disconnects_ssh": false,
       "killable": true,
       "pipeline": [
-        {"command": ["ls", "-al"]},
-        {"command": ["grep", "{key_word}"]}
+        {
+          "command": [
+            "ls",
+            "-al"
+          ]
+        },
+        {
+          "command": [
+            "grep",
+            "{key_word}"
+          ]
+        },
+        {
+          "command": [
+            "grep",
+            "{key_word2}"
+          ]
+        }
       ],
-      "arguments": [{"name": "key_word", "type": "string", "validation_regex": "^[a-zA-Z0-9._-]+$"}]
+      "arguments": [
+        {
+          "name": "key_word",
+          "type": "string",
+          "validation_regex": ".*"
+        },
+        {
+          "name": "key_word2",
+          "type": "string",
+          "validation_regex": "^[a-zA-Z0-9._-]+$"
+        }
+      ]
     },
     {
       "command_name": "whoami",

@@ -26,6 +26,7 @@ class CommandState(BaseModel):
     username: str
     ssh_config: str
     request_id: str
+    exec_command: str
 
     # control
     killable: bool
@@ -98,6 +99,7 @@ class CommandExecutionResponse(BaseModel):
     message: str = ""
     exit_status: Optional[int] = None
     output: Optional[str] = None
+    exec_command: Optional[str] = None
 
     @classmethod
     def failed(cls, message: str, exit_status: Optional[int] = None, output: Optional[str] = None, command_id: Optional[str] = None) -> "CommandExecutionResponse":
