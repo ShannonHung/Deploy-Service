@@ -307,7 +307,16 @@ class CommandService:
             else:
                 state.mark_failed(response.message or "")
         
-        await self.repo.update(command_id, updater, ttl)
+        # SAFETY: Only update outcome if the current state is still RUNNING.
+        # If it's KILLING or KILLED, it means the command was aborted or killed externally.
+        updated = await self.repo.update_if(
+            command_id,
+            condition=lambda s: s.status == CommandStatus.RUNNING,
+            updater=updater,
+            ttl_seconds=ttl
+        )
+        if not updated:
+            logger.info(f"Skipping result storage for {command_id}; state was not RUNNING (possibly killed).")
 
     async def _execute_pipeline(self, context: ExecutionContext, command_id: str, cmd_str_preview: str):
         """Spawn each pipeline step on the remote host and capture PGIDs.
@@ -475,10 +484,7 @@ class CommandService:
                     f"Command '{context.command_name}' timed out after {timeout_seconds}s.",
                     extra={"request_id": context.request_id, "username": context.username, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port}
                 )
-                await self.kill_command(command_id)
-                await self._store_result(command_id, CommandExecutionResponse.failed(
-                    message="Command timed out and was killed.", command_id=command_id
-                ))
+                await self.kill_command(command_id, message="Command timed out and was killed.")
             except Exception as e:
                 logger.error(
                     f"Command '{context.command_name}' failed asynchronously: {str(e)}",
@@ -539,31 +545,44 @@ class CommandService:
 
         return await self._handle_async_execution(context)
 
-    async def kill_command(self, command_id: str):
+    async def kill_command(self, command_id: str, message: str = "Killed"):
         """Terminate a running command using two-phase PGID-based kill.
-
-        Phase 1: ``kill -TERM -{pgid}`` (soft kill, allows graceful shutdown).
-        Phase 2: After a 2-second grace period, ``kill -KILL -{pgid}``
-                 if the process group is still alive.
-
-        Skips silently if the command_id is not found or not killable.
+        
+        Phase 1: ``kill -TERM -{pgid}`` (soft kill).
+        Phase 2: After a grace period, ``kill -KILL -{pgid}``.
+        
+        Transitions state: RUNNING -> KILLING -> KILLED.
         """
-        # 1. Try Local Kill First
+        # 1. Atomic State Transition to KILLING
+        # Use update_if to ensure we only start killing if it's currently RUNNING.
+        ttl = settings.COMMAND_RESULT_TTL_SECONDS
+        
+        success = await self.repo.update_if(
+            command_id,
+            condition=lambda s: s.status == CommandStatus.RUNNING,
+            updater=lambda s: s.mark_killing(message),
+            ttl_seconds=ttl
+        )
+        
+        if not success:
+            logger.info(f"Kill request aborted for {command_id}: Command is not in RUNNING state.")
+            return
+
+        # 2. Perform SSH Kill Logic
+        # Try Local Kill First
         entry = _local_running_commands.get(command_id)
         if entry:
             if not entry.killable:
                 logger.warning(f"Command {command_id} is not killable.", extra={"command_id": command_id})
                 return
             await self._do_kill_via_connection(entry.conn, entry.pgids, command_id)
+            await self.repo.update(command_id, lambda s: s.mark_killed(message), ttl)
             return
 
-        # 2. Try Cross-Pod Kill via Repository
+        # Try Cross-Pod Kill via Repository
         try:
             state = await self.repo.get(command_id)
         except CommandExecutionException:
-            return  # Record not found
-
-        if not state.is_running:
             return
 
         if not state.killable:
@@ -571,7 +590,10 @@ class CommandService:
             return
             
         if not state.pgids:
-            return # No processes assigned yet
+            # If no PGIDs yet, we've already marked it as KILLING,
+            # so the async task will eventually hit _store_result and be blocked.
+            await self.repo.update(command_id, lambda s: s.mark_killed(message), ttl)
+            return
 
         logger.info(f"Initiating cross-pod kill for {command_id} on {state.host}:{state.port}")
         
@@ -586,6 +608,7 @@ class CommandService:
             )
             try:
                 await self._do_kill_via_connection(conn, state.pgids, command_id)
+                await self.repo.update(command_id, lambda s: s.mark_killed(message), ttl)
             finally:
                 conn.close()
         except Exception as e:

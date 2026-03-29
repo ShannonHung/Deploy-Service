@@ -78,3 +78,41 @@ async def get_command_execution_status(
         return ApiResponse(data=response_data, request_id=_request_id(request))
     except CommandExecutionException as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+@router.post(
+    "/execution/{command_id}/kill",
+    response_model=ApiResponse[CommandExecutionResponse],
+    summary="Kill Running Command",
+)
+async def kill_command_endpoint(
+    command_id: str,
+    request: Request,
+    current_user: User = Depends(get_current_user(["command_api"])),
+    svc: CommandService = Depends(get_command_service),
+) -> ApiResponse[CommandExecutionResponse]:
+    req_id = _request_id(request)
+    # Check current state first to provide immediate feedback
+    try:
+        state = await svc.repo.get(command_id)
+        if state.status != "running":
+             return ApiResponse(
+                data=CommandExecutionResponse.failed(
+                    message=f"Cannot kill command in {state.status} state.",
+                    command_id=command_id
+                ),
+                request_id=req_id
+            )
+    except Exception:
+        raise HTTPException(status_code=404, detail="Command not found")
+
+    # Proceed with kill (this handles distributed safety via status=killing)
+    await svc.kill_command(command_id, message="Killed by user request.")
+    
+    return ApiResponse(
+        data=CommandExecutionResponse(
+            command_id=command_id,
+            status="accepted",
+            message="Kill request accepted"
+        ),
+        request_id=req_id
+    )

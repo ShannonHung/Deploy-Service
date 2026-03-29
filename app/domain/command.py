@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field
 
 class CommandStatus(str, Enum):
     RUNNING = "running"
+    KILLING = "killing"
+    KILLED = "killed"
     SUCCESS = "success"
     FAILED = "failed"
 
@@ -36,6 +38,10 @@ class CommandState(BaseModel):
     def is_running(self) -> bool:
         return self.status == CommandStatus.RUNNING
 
+    @property
+    def is_killable_state(self) -> bool:
+        return self.status == CommandStatus.RUNNING
+
     def mark_success(self, exit_code: int, output: str):
         self.status = CommandStatus.SUCCESS
         self.exit_code = exit_code
@@ -43,6 +49,14 @@ class CommandState(BaseModel):
 
     def mark_failed(self, message: str):
         self.status = CommandStatus.FAILED
+        self.message = message
+
+    def mark_killing(self, message: str):
+        self.status = CommandStatus.KILLING
+        self.message = message
+
+    def mark_killed(self, message: str):
+        self.status = CommandStatus.KILLED
         self.message = message
 
 

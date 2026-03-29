@@ -367,13 +367,28 @@ if res.exit_status == 0:
           └──────────────────────────┘
 ```
 
-相比於拆分 `running` 和 `result` 兩個斷點，這個單一 JSON 設計實現了一個**完美的 State Machine**，並透過 `exec_command` 保存了完整解析後的指令字串，增加了系統的可觀測性 (Observability)。
+單一 JSON 設計實現了一個**State Machine**，並透過 `exec_command` 保存了完整解析後的指令字串，增加了系統的可觀測性 (Observability)。
+
+### 分布式安全中斷 (Distributed Safe Kill)
+
+為了在多 Pod 環境下安全地執行中斷操作，我們實作了以下三層防護：
+
+1. **原子化狀態跳轉 (Condition Update)**: 
+   利用 Repository 的 `update_if` 方法，保證只有在目前的狀態確實為 `RUNNING` 時，才允許切換為 `KILLING` 狀態。這防止了當指令已經結束（Success/Failed）後，卻又被誤植為中斷狀態的情境。
+   
+2. **寫回保護 (Write-Back Protection)**:
+   在非同步任務完成準備將結果寫回 Redis 時，會先檢查狀態是否仍為 `RUNNING`。如果狀態已經被其他請求變更為 `KILLING` 或 `KILLED`，則會**放棄**該次結果寫入。這確保了「慢速的執行結果」不會覆蓋掉「快速的中斷操作」。
+
+3. **中斷原因追蹤**:
+   我們利用既有的 `message` 欄位來記錄中斷的原因，不額外增加欄位以保持架構精簡：
+   - 超時觸發：`message: "Command timed out and was killed."`
+   - 使用者發起：`message: "Killed by user request."`
 
 ### Repository 與 Domain Model 封裝
 
 為符合 Clean Architecture，Redis 的直接操作被封裝在 `CommandStateRepository` 中：
-- **`CommandState`**: 領域模型，定義了狀態轉換邏輯（如 `mark_success`）與 Pydantic 驗證。
-- **`repo.update(id, updater_func)`**: 採用閉包模式，確保「讀取-修改-回寫」的原子性，避免多處並行更新導致的資料遺失。
+- **`CommandState`**: 領域模型，定義了狀態轉換邏輯（如 `mark_success`, `mark_killing`）與 Pydantic 驗證。
+- **`repo.update_if(id, condition, updater)`**: 確保「讀取-檢查條件-修改-回寫」的原子性。
 
 ### 輪詢與狀態查詢
 
@@ -562,22 +577,20 @@ execute_command()                  ← (1) 入口點：協調整個生命週期
 │   │
 │   └─ (B) _handle_async_execution() ← (6b) 非同步路徑 (一般指令)
 │           │
-│           ├─ repo.save()           ← (7) 初始化：在 Redis 宣告 command_id 為 "running"
+│           ├─ repo.save()           ← (7) 初始化：在 Redis 宣告 command_id 為 "runing"
 │           ├─ 建立 background task  ← (8) 卸載 (Offload) 執行邏輯到後台
 │           │
 │           └─ _timeout_wrapper()    ← (9) 守護進程：負責計時與 Semaphore 節流
 │               │
-│               └─ _execution_task() ← (10) 執行本體任務
-│                   │
-│                   ├─ _execute_pipeline() ← (11) 遠端執行 (setsid)
-│                   │   └─ conn.create_process()
-│                   │
-│                   ├─ repo.update(pgids) ← (12) 可追蹤性：儲存 PGID 以供跨 Pod kill
-│                   │
-│                   ├─ _collect_output()   ← (13) 數據收集：讀取 stdout/stderr
-│                   │
-│                   └─ _store_result()     ← (14) 狀態結算：原子化更新 status 為 success/failed
-│                       └─ repo.update(status)
+│               ├─ 正常結束 (SUCCESS/FAILED)
+│               │   └─ _execution_task() 
+│               │       └─ repo.update_if(RUNNING) ← (14) 狀態結算：原子化更新 status
+│               │
+│               └─ 觸發中斷 (KILLING/KILLED)
+│                   └─ kill_command(reason)
+│                       ├─ repo.update_if(RUNNING) ← (A) 搶佔狀態：標記為 KILLING
+│                       ├─ _do_kill_via_connection()
+│                       └─ repo.update(KILLED)     ← (B) 終態標記：寫入原因至 message
 │
 └─ return command_id (running)       ← (15) 立即返回 ID 給 API Call
 ```
@@ -585,7 +598,7 @@ execute_command()                  ← (1) 入口點：協調整個生命週期
 ### 設計核心理念 (Design Principles)
 
 1. **防注入為本 (Injection-Proof)**：透過 shlex 與 `exec "$@"` 定位引數機制，確保用戶參數被視為純字串，在 Shell 層級實現數學意義上的防注入。
-2. **單一事實來源 (Single Source of Truth)**：藉由 Redis 單一 JSON Key (`command:{id}`) 管理整個狀態機，避免分散狀態引發的 Race Condition。
-3. **高可觀測性 (High Observability)**：新增 `exec_command` 欄位完整紀錄解析後的執行內容，確保每一筆遠端操作均有跡可循。
-4. **Clean Architecture (乾淨架構)**：將領域邏輯 (Service)、資料存取 (Repository)、模型定義 (Domain) 徹底分離，確保系統不被特定資料庫 (Redis) 或傳輸協議 (SSH) 綁架，具備極高的維護彈性。
+2. **分散式狀態安全 (Distributed State Safety)**：藉由 `update_if` (Compare-and-Swap 思想) 確保狀態跳轉的單向性與正確性，防止多節點 Race Condition。
+3. **高可觀測性 (High Observability)**：新增 `exec_command` 與記錄中斷原因至 `message`，確保每一筆遠端操作均有跡可循。
+4. **Clean Architecture (乾淨架構)**：將領域邏輯 (Service)、資料存取 (Repository)、模型定義 (Domain) 徹底分離，確保系統具備極高的維護彈性。
 5. **精準獵殺 (Precise Lifecycle Control)**：利用 `setsid` 與 `PGID` 配合兩階段 Kill 策略，即便在分布式系統中也能保證遠端進程的完整清理。

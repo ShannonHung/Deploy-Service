@@ -32,9 +32,21 @@ class CommandStateRepository:
             raise CommandExecutionException(f"Invalid record format for {command_id}.")
 
     async def update(self, command_id: str, updater: Callable[[CommandState], Coroutine[None, None, None] | None], ttl_seconds: int):
-        """Fetch, apply synchronous or asynchronous updater function, and save state."""
+        """Fetch, apply updater function, and save state."""
         state = await self.get(command_id)
         result = updater(state)
         if asyncio.iscoroutine(result):
             await result
         await self.save(state, ttl_seconds)
+
+    async def update_if(self, command_id: str, condition: Callable[[CommandState], bool], updater: Callable[[CommandState], Coroutine[None, None, None] | None], ttl_seconds: int) -> bool:
+        """Fetch, check condition, apply updater, and save. Returns True if updated, False otherwise."""
+        state = await self.get(command_id)
+        if not condition(state):
+            return False
+            
+        result = updater(state)
+        if asyncio.iscoroutine(result):
+            await result
+        await self.save(state, ttl_seconds)
+        return True

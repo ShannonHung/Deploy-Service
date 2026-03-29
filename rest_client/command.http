@@ -55,7 +55,7 @@ Content-Type: application/json
         "timeout_seconds": 600
     },
     "arguments": {
-        "time": "333"
+        "time": "123"
     }
 }
 
@@ -103,4 +103,10 @@ Content-Type: application/json
 @my_command_id = {{my_command.response.body.data.command_id}}
 
 GET {{base_url}}/api/v1/command/execution/{{my_command_id}}
+Authorization: Bearer {{token}}
+
+### Kill command
+@my_command_id = {{my_command.response.body.data.command_id}}
+
+POST {{base_url}}/api/v1/command/execution/{{my_command_id}}/kill
 Authorization: Bearer {{token}}
