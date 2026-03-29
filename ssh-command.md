@@ -46,14 +46,17 @@ Client ──HTTP──▶ FastAPI ──SSH──▶ Remote Node
 
 ```
 execute_command()          ← 頂層 Orchestrator
- ├─ _prepare_execution()   ← 解析白名單、驗證參數、載入 SSH 設定
- ├─ _build_pipeline()      ← 將 {placeholder} 替換為實際參數值，產出 List[List[str]]
+ ├─ _check_capacity()      ← 檢查 Pod 本機連線數
+ ├─ _prepare_execution()   ← 解析白名單、驗證參數 (Regex/Anti-Injection)、載入 SSH 設定
+ ├─ _build_pipeline()      ← 將 {placeholder} 替換為實際參數值
  ├─ _connect()             ← 建立 SSH 連線
  └─ 分流 ──┬─ _handle_fire_and_forget()   ← disconnects_ssh=true
            └─ _handle_async_execution()   ← 一般指令（背景執行 + 超時控制）
-                ├─ _execute_pipeline()     ← 建立 Process、擷取 PGID
-                ├─ _collect_output()       ← 收集 stdout + stderr
-                └─ _store_result()         ← 寫入 results pool
+                ├─ repo.save()            ← 初始化 CommandStatus.RUNNING 並存入 Redis
+                ├─ _execute_pipeline()    ← 建立 Process (setsid)、擷取 PGID
+                ├─ repo.update(pgids)     ← 將執行中的進程群組 ID 回填至 Redis
+                ├─ _collect_output()       ← 收集最終輸出
+                └─ _store_result()        ← 呼叫 repo.update 標註成功或失敗
 ```
 
 所有階段所需的上下文資訊統一封裝在 `ExecutionContext` Dataclass 中，避免冗長的函式參數傳遞：
@@ -347,24 +350,30 @@ if res.exit_status == 0:
                    ▼
           ┌──────────────────────────┐
           │ _local_running_commands   │  ← Dict[command_id, RunningCommandEntry]
-          │   (只存活於當下 Pod)        │     保存實際的 SSH conn, processes 供後續管理
+          │   (只存活於當下 Pod)        │     保存本機 asyncio.Task 與 SSH 連線
           └──────────┬───────────────┘
-                     │ 初始化狀態寫入 Redis
+                     │ 透過 repo.save(CommandState)
                      ▼
           ┌──────────────────────────┐
           │  command:{command_id}     │  ← Redis (JSON 格式)
-          │  "status": "running"      │     包含 host, pgids 等 metadata
+          │  "status": "running"      │     包含 host, pgids, exec_command 等
           └──────────┬───────────────┘
-                     │ 指令完成 / 逾時 / 失敗
+                     │ 指令完成 / 逾時 / 失敗 (透過 repo.update)
                      ▼
           ┌──────────────────────────┐     發起指令的 Pod A 原地更新狀態
           │  command:{command_id}     │  ← Redis (JSON 格式)
-          │  "status": "success"      │    其他 Pod (如 Pod B) 皆可打 API 取出這個 JSON
+          │  "status": "success"      │    其他 Pod (如 Pod B) 皆可查詢
           │  (並寫入 output, exit_code)│    並動態轉為 CommandExecutionResponse
           └──────────────────────────┘
 ```
 
-相比於拆分 `running` 和 `result` 兩個斷點，這個單一 JSON 設計實現了一個**完美的 State Machine**，根絕了同時讀到或讀不到兩個鍵所產生的 Race Condition，並讓資料在 RedisInsight 內呈現得既完整又直觀。
+相比於拆分 `running` 和 `result` 兩個斷點，這個單一 JSON 設計實現了一個**完美的 State Machine**，並透過 `exec_command` 保存了完整解析後的指令字串，增加了系統的可觀測性 (Observability)。
+
+### Repository 與 Domain Model 封裝
+
+為符合 Clean Architecture，Redis 的直接操作被封裝在 `CommandStateRepository` 中：
+- **`CommandState`**: 領域模型，定義了狀態轉換邏輯（如 `mark_success`）與 Pydantic 驗證。
+- **`repo.update(id, updater_func)`**: 採用閉包模式，確保「讀取-修改-回寫」的原子性，避免多處並行更新導致的資料遺失。
 
 ### 輪詢與狀態查詢
 
@@ -519,5 +528,64 @@ logger.info(
 | `app/repositories/ssh_key_auth_repository.py` | SSH Key 認證器（Base64 解碼） |
 | `app/repositories/ssh_cert_auth_repository.py` | SSH Certificate 認證器（Base64 解碼） |
 | `app/core/exceptions.py` | `CommandExecutionException` 繼承自 `BaseAppException` |
+| `app/repositories/command_state_repository.py` | Redis 狀態倉儲：封裝所有 command:{id} 的讀寫 |
 | `data/allow-commands-{role}.json` | 角色白名單設定 |
 | `data/SSH-{target}.json` | SSH 連線設定（含 Base64 編碼的金鑰） |
+
+---
+
+## 12. 架構層級：Function Call 流程與設計核心
+
+### 核心調用圖譜 (Function Call Flow)
+
+```
+execute_command()                  ← (1) 入口點：協調整個生命週期
+│
+├─ _check_capacity()                ← (2) 容量檢查：防止 Pod 過載
+│
+├─ _prepare_execution()             ← (3) 靜態驗證與準備
+│   ├─ _load_user_whitelist()       ← 載入 JSON 權限清單
+│   ├─ host allow/deny check        ← IP/Hostname 黑白名單攔截
+│   ├─ argument validation          ← 依 Regex 驗證用戶輸入
+│   │    └─ _validate_anti_injection() ← 核心防注入：字元層級攔截
+│   └─ _load_ssh_config()           ← 載入 SSH 連線資訊
+│
+├─ _build_pipeline()                ← (4) 指令渲染
+│   └─ _resolve_command_part()      ← 將 {placeholder} 替換為實際參數
+│
+├─ _connect()                       ← (5) 建立連線：驗證 SSH 憑證
+│   └─ asyncssh.connect()
+│
+├─ 分支：
+│   ├─ (A) _handle_fire_and_forget() ← (6a) 斷線指令路徑 (如 Reboot)
+│   │       └─ conn.run()
+│   │
+│   └─ (B) _handle_async_execution() ← (6b) 非同步路徑 (一般指令)
+│           │
+│           ├─ repo.save()           ← (7) 初始化：在 Redis 宣告 command_id 為 "running"
+│           ├─ 建立 background task  ← (8) 卸載 (Offload) 執行邏輯到後台
+│           │
+│           └─ _timeout_wrapper()    ← (9) 守護進程：負責計時與 Semaphore 節流
+│               │
+│               └─ _execution_task() ← (10) 執行本體任務
+│                   │
+│                   ├─ _execute_pipeline() ← (11) 遠端執行 (setsid)
+│                   │   └─ conn.create_process()
+│                   │
+│                   ├─ repo.update(pgids) ← (12) 可追蹤性：儲存 PGID 以供跨 Pod kill
+│                   │
+│                   ├─ _collect_output()   ← (13) 數據收集：讀取 stdout/stderr
+│                   │
+│                   └─ _store_result()     ← (14) 狀態結算：原子化更新 status 為 success/failed
+│                       └─ repo.update(status)
+│
+└─ return command_id (running)       ← (15) 立即返回 ID 給 API Call
+```
+
+### 設計核心理念 (Design Principles)
+
+1. **防注入為本 (Injection-Proof)**：透過 shlex 與 `exec "$@"` 定位引數機制，確保用戶參數被視為純字串，在 Shell 層級實現數學意義上的防注入。
+2. **單一事實來源 (Single Source of Truth)**：藉由 Redis 單一 JSON Key (`command:{id}`) 管理整個狀態機，避免分散狀態引發的 Race Condition。
+3. **高可觀測性 (High Observability)**：新增 `exec_command` 欄位完整紀錄解析後的執行內容，確保每一筆遠端操作均有跡可循。
+4. **Clean Architecture (乾淨架構)**：將領域邏輯 (Service)、資料存取 (Repository)、模型定義 (Domain) 徹底分離，確保系統不被特定資料庫 (Redis) 或傳輸協議 (SSH) 綁架，具備極高的維護彈性。
+5. **精準獵殺 (Precise Lifecycle Control)**：利用 `setsid` 與 `PGID` 配合兩階段 Kill 策略，即便在分布式系統中也能保證遠端進程的完整清理。
