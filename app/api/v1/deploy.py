@@ -227,6 +227,14 @@ async def get_formatted_job_trace(
     summary="View job logs in UI",
     description="Opens a beautiful, auto-refreshing log viewer for the specific job.",
 )
-async def view_job(job_id: int):
+async def view_job(
+    job_id: int,
+    project_id: int | None = Query(None, description="GitLab project ID"),
+):
     """Returns a styled HTML log viewer."""
-    return LOG_VIEWER_HTML.format(job_id=job_id)
+    settings = get_settings()
+    target_project_id = project_id or settings.GITLAB_PROJECT_ID
+    return LOG_VIEWER_HTML.format(
+        job_id=job_id,
+        project_id=target_project_id,
+    )

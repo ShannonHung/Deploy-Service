@@ -234,7 +234,7 @@ LOG_VIEWER_HTML = """
 
         async function refresh() {{
             try {{
-                const res = await fetch(`/api/v1/deploy/jobs/{job_id}/trace/ui?offset=${{currentOffset}}&t=${{Date.now()}}`, {{ cache: 'no-store' }});
+                const res = await fetch(`/api/v1/deploy/jobs/{job_id}/trace/ui?offset=${{currentOffset}}&project_id={project_id}&t=${{Date.now()}}`, {{ cache: 'no-store' }});
                 const json = await res.json();
                 if (!json.data || !json.data.lines) throw new Error("Invalid API response");
 
