@@ -1,8 +1,48 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 import asyncio
+from enum import Enum
 import asyncssh
 from pydantic import BaseModel, Field
+
+
+# ── State Machine Domain Models ──────────────────────────────────────────────
+
+class CommandStatus(str, Enum):
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+class CommandState(BaseModel):
+    command_id: str
+    status: CommandStatus
+    output: Optional[str] = None
+    exit_code: Optional[int] = None
+    message: Optional[str] = None
+
+    # execution metadata
+    host: str
+    port: int
+    username: str
+    ssh_config: str
+    request_id: str
+
+    # control
+    killable: bool
+    pgids: List[int] = Field(default_factory=list)
+
+    @property
+    def is_running(self) -> bool:
+        return self.status == CommandStatus.RUNNING
+
+    def mark_success(self, exit_code: int, output: str):
+        self.status = CommandStatus.SUCCESS
+        self.exit_code = exit_code
+        self.output = output
+
+    def mark_failed(self, message: str):
+        self.status = CommandStatus.FAILED
+        self.message = message
 
 
 # ── Whitelist Configuration ──────────────────────────────────────────────────
@@ -61,11 +101,11 @@ class CommandExecutionResponse(BaseModel):
 
     @classmethod
     def failed(cls, message: str, exit_status: Optional[int] = None, output: Optional[str] = None, command_id: Optional[str] = None) -> "CommandExecutionResponse":
-        return cls(status="failed", message=message, exit_status=exit_status, output=output, command_id=command_id)
+        return cls(status=CommandStatus.FAILED.value, message=message, exit_status=exit_status, output=output, command_id=command_id)
 
     @classmethod
     def success(cls, command_id: str, exit_status: int, output: str) -> "CommandExecutionResponse":
-        return cls(status="success", command_id=command_id, exit_status=exit_status, output=output)
+        return cls(status=CommandStatus.SUCCESS.value, command_id=command_id, exit_status=exit_status, output=output)
 
 
 # ── Runtime Dataclasses ──────────────────────────────────────────────────────

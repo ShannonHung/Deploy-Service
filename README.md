@@ -142,6 +142,40 @@ def deploy(user: User = Depends(get_current_user(["deploy_api"]))):
 | `.env.prod` | 生產（`APP_ENV=prod`，需替換 `SECRET_KEY`） |
 | `.env.test` | 測試（短 token 過期時間，fixture 資料） |
 
+**Redis 環境變數**：
+- `REDIS_URL`：連線位置 (預設為 `redis://localhost:6379/0`)
+- `COMMAND_RESULT_TTL_SECONDS`：Command 結果在 Redis 的存放時間 (預設 86400 秒)
+
+---
+
+## Redis 架設方式
+
+Command API 需要 Redis 才能在多個 Pod / Worker 的情境下共用執行狀態與追蹤跨 Node 執行。本專案提供兩種快速起手方式：
+
+### 選項 A：使用 Docker Compose (本地開發最快)
+
+我們提供了 `redis` 以及 `redis-insight` (圖形化介面) 供本地開發檢視 Redis 資料。
+開發時只要執行 `make dev`，就會自動建立 Docker 容器並啟動 Uvicorn。
+
+如果你只想單獨管理 Redis 容器（包含徹底刪除資料）：
+```bash
+# 啟動 Redis 與 RedisInsight
+make redis-up
+
+# 關閉並「徹底刪除」所有 Volume 與 Network 資料
+make redis-down
+```
+RedisInsight 預設執行在: `http://localhost:5540` 
+
+### 選項 B：使用 K3s (模擬叢集)
+
+若要在您的 k3s 環境中快速架設測試，可直接套用準備好的 manifest 檔案：
+```bash
+kubectl apply -f k3s-redis.yaml
+# 等待拉取鏡像
+kubectl get pods -w
+```
+
 ---
 
 ## 測試環境與 SSH Nodes 快速架設

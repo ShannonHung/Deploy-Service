@@ -7,22 +7,24 @@ import os
 import shlex
 import asyncssh
 from typing import Dict, Any, List, Optional
+from datetime import timedelta
 
 from app.domain.command import (
     CommandExecutionRequest, CommandExecutionResponse,
     UserCommandWhitelist, CommandWhitelistConfig,
     SSHConnectionConfig, RunningCommandEntry, ExecutionContext,
+    CommandState, CommandStatus,
 )
 from app.core.config import get_settings
+from app.core.redis_client import RedisClient
 from app.repositories.ssh_auth_repository import create_authenticator
+from app.repositories.command_state_repository import CommandStateRepository
 from app.core.exceptions import CommandExecutionException
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-running_commands_pool: Dict[str, RunningCommandEntry] = {}
-command_results_pool: Dict[str, CommandExecutionResponse] = {}
-MAX_RESULTS_POOL_SIZE: int = 200
+_local_running_commands: Dict[str, RunningCommandEntry] = {}
 
 _execution_semaphore: Optional[asyncio.Semaphore] = None
 
@@ -33,19 +35,12 @@ def _get_semaphore() -> asyncio.Semaphore:
         _execution_semaphore = asyncio.Semaphore(settings.COMMAND_MAX_CONCURRENCY)
     return _execution_semaphore
 
-def _prune_results_pool():
-    """Enforce LRU eviction on command_results_pool.
-
-    Removes the oldest entries (insertion-order) until the pool size
-    is within MAX_RESULTS_POOL_SIZE.  Called after every result insertion.
-    """
-    while len(command_results_pool) > MAX_RESULTS_POOL_SIZE:
-        oldest_key = next(iter(command_results_pool))
-        command_results_pool.pop(oldest_key, None)
 
 class CommandService:
-    @staticmethod
-    def _validate_anti_injection(user_input: str):
+    def __init__(self, repo: CommandStateRepository):
+        self.repo = repo
+
+    def _validate_anti_injection(self, user_input: str):
         """Early-rejection layer: block inputs containing shell meta-characters.
 
         This is the first of three anti-injection defences (see ssh-command.md §4).
@@ -59,8 +54,7 @@ class CommandService:
         if any(char in user_input for char in dangerous_chars):
             raise CommandExecutionException("Invalid characters detected in input.")
 
-    @staticmethod
-    def _load_user_whitelist(username: str) -> UserCommandWhitelist:
+    def _load_user_whitelist(self, username: str) -> UserCommandWhitelist:
         """Load the command whitelist configuration for a given user role.
 
         Reads ``data/allow-commands-{username}.json`` and deserialises it
@@ -76,8 +70,7 @@ class CommandService:
             data = json.load(f)
         return UserCommandWhitelist(**data)
 
-    @staticmethod
-    def _load_ssh_config(target: str) -> SSHConnectionConfig:
+    def _load_ssh_config(self, target: str) -> SSHConnectionConfig:
         """Load SSH connection configuration for the specified target cluster.
 
         Looks for ``data/SSH-{target}.json`` first; falls back to
@@ -95,44 +88,35 @@ class CommandService:
             data = json.load(f)
         return SSHConnectionConfig(**data)
 
-    @staticmethod
-    def get_command_execution_result(command_id: str) -> CommandExecutionResponse:
-        """Poll the current status / result for a previously submitted command.
-
-        Lookup order:
-          1. ``running_commands_pool`` → returns status "running".
-          2. ``command_results_pool``  → returns the cached final result.
-          3. Neither                   → raises 404-equivalent exception.
-
-        Raises:
-            CommandExecutionException: If the command_id is not found in either pool.
+    async def get_command_execution_result(self, command_id: str) -> CommandExecutionResponse:
+        """Poll the current status / result for a previously submitted command from Redis.
         """
-        if command_id in running_commands_pool:
-            return CommandExecutionResponse(status="running", command_id=command_id)
-        if command_id in command_results_pool:
-            return command_results_pool[command_id]
-        raise CommandExecutionException(f"Execution record {command_id} not found.")
+        state = await self.repo.get(command_id)
+        return CommandExecutionResponse(
+            status=state.status,
+            command_id=state.command_id,
+            exit_status=state.exit_code,
+            output=state.output,
+            message=state.message or ""
+        )
 
-    @staticmethod
-    def get_user_commands(username: str) -> UserCommandWhitelist:
+    def get_user_commands(self, username: str) -> UserCommandWhitelist:
         """Return the full command whitelist available to the given user."""
-        return CommandService._load_user_whitelist(username)
+        return self._load_user_whitelist(username)
 
-    @staticmethod
-    def get_command_info(username: str, command_name: str) -> CommandWhitelistConfig:
+    def get_command_info(self, username: str, command_name: str) -> CommandWhitelistConfig:
         """Return the whitelist definition for a single command.
 
         Raises:
             CommandExecutionException: If command_name is not in the user's whitelist.
         """
-        whitelist = CommandService._load_user_whitelist(username)
+        whitelist = self._load_user_whitelist(username)
         cmd_config = next((c for c in whitelist.allow_commands if c.command_name == command_name), None)
         if not cmd_config:
             raise CommandExecutionException(f"Command '{command_name}' not found.")
         return cmd_config
 
-    @staticmethod
-    def _prepare_execution(username: str, request_id: str, req: CommandExecutionRequest) -> ExecutionContext:
+    def _prepare_execution(self, username: str, request_id: str, req: CommandExecutionRequest) -> ExecutionContext:
         """Validate the incoming request and assemble an ExecutionContext.
 
         Performs whitelist lookup, argument validation (anti-injection +
@@ -142,7 +126,7 @@ class CommandService:
         Raises:
             CommandExecutionException: On any validation or config failure.
         """
-        whitelist = CommandService._load_user_whitelist(username)
+        whitelist = self._load_user_whitelist(username)
         
         # Check host against deny list (blacklist)
         if any(re.match(pattern, req.host) for pattern in whitelist.deny_hosts):
@@ -169,12 +153,12 @@ class CommandService:
             if val is None:
                 raise CommandExecutionException(f"Missing required argument: {arg_conf.name}")
             val_str = str(val)
-            CommandService._validate_anti_injection(val_str)
+            self._validate_anti_injection(val_str)
             if arg_conf.validation_regex:
                 if not re.match(arg_conf.validation_regex, val_str):
                     raise CommandExecutionException(f"Argument '{arg_conf.name}' does not match validation regex.")
         
-        ssh_config = CommandService._load_ssh_config(req.ssh_config)
+        ssh_config = self._load_ssh_config(req.ssh_config)
         
         return ExecutionContext(
             username=username,
@@ -185,8 +169,7 @@ class CommandService:
             ssh_config=ssh_config
         )
 
-    @staticmethod
-    def _resolve_command_part(part: str, arguments: Dict[str, Any], arg_defs: list) -> str:
+    def _resolve_command_part(self, part: str, arguments: Dict[str, Any], arg_defs: list) -> str:
         """Replace {placeholder} tokens in a single command part with actual argument values."""
         for arg in arg_defs:
             placeholder = f"{{{arg.name}}}"
@@ -194,8 +177,7 @@ class CommandService:
                 part = part.replace(placeholder, str(arguments[arg.name]))
         return part
 
-    @staticmethod
-    def _build_pipeline(context: ExecutionContext) -> List[List[str]]:
+    def _build_pipeline(self, context: ExecutionContext) -> List[List[str]]:
         """Resolve all {placeholder} tokens and return the final pipeline.
 
         Pure function: produces ``List[List[str]]`` with no side-effects or
@@ -206,14 +188,13 @@ class CommandService:
         """
         return [
             [
-                CommandService._resolve_command_part(part, context.raw_request.arguments, context.cmd_config.arguments)
+                self._resolve_command_part(part, context.raw_request.arguments, context.cmd_config.arguments)
                 for part in step.command
             ]
             for step in context.cmd_config.pipeline
         ]
 
-    @staticmethod
-    async def _connect(context: ExecutionContext, req: CommandExecutionRequest) -> asyncssh.SSHClientConnection:
+    async def _connect(self, context: ExecutionContext, req: CommandExecutionRequest) -> asyncssh.SSHClientConnection:
         """Establish an SSH connection to the target host.
 
         Delegates credential handling to the authenticator resolved from
@@ -244,8 +225,7 @@ class CommandService:
         except Exception as e:
             raise CommandExecutionException(f"SSH Connection Failed ({target}): {str(e)}")
 
-    @staticmethod
-    async def _handle_fire_and_forget(context: ExecutionContext) -> CommandExecutionResponse:
+    async def _handle_fire_and_forget(self, context: ExecutionContext) -> CommandExecutionResponse:
         """Execute a command that is expected to sever the SSH connection (e.g. reboot).
 
         Uses dual-mode detection:
@@ -279,7 +259,7 @@ class CommandService:
                     extra=log_extra,
                 )
                 return CommandExecutionResponse(
-                    status="success",
+                    status=CommandStatus.SUCCESS.value,
                     message=f"Command dispatched and connection to {target} dropped as expected.",
                 )
             
@@ -303,7 +283,7 @@ class CommandService:
                 extra=log_extra,
             )
             return CommandExecutionResponse(
-                status="success",
+                status=CommandStatus.SUCCESS.value,
                 message=f"Command dispatched and connection to {target} dropped as expected.",
             )
         except Exception as e:
@@ -315,14 +295,19 @@ class CommandService:
         finally:
             conn.close()
 
-    @staticmethod
-    def _store_result(command_id: str, response: CommandExecutionResponse):
-        """Persist a finished command's response into the results pool and prune if needed."""
-        command_results_pool[command_id] = response
-        _prune_results_pool()
+    async def _store_result(self, command_id: str, response: CommandExecutionResponse):
+        """Persist a finished command's response into the existing Redis state machine with a new TTL."""
+        ttl = settings.COMMAND_RESULT_TTL_SECONDS
+        
+        async def updater(state: CommandState):
+            if response.status == CommandStatus.SUCCESS.value:
+                state.mark_success(response.exit_status or 0, response.output or "")
+            else:
+                state.mark_failed(response.message or "")
+        
+        await self.repo.update(command_id, updater, ttl)
 
-    @staticmethod
-    async def _execute_pipeline(context: ExecutionContext, command_id: str, cmd_str_preview: str):
+    async def _execute_pipeline(self, context: ExecutionContext, command_id: str, cmd_str_preview: str):
         """Spawn each pipeline step on the remote host and capture PGIDs.
 
         Each step is wrapped with ``setsid -w sh -c 'echo $$ >&2; exec "$@"'``
@@ -334,7 +319,7 @@ class CommandService:
             The final ``asyncssh.SSHClientProcess`` whose output should be
             collected by ``_collect_output``.
         """
-        entry = running_commands_pool.get(command_id)
+        entry = _local_running_commands.get(command_id)
         if not entry:
             return 1, ""
 
@@ -388,8 +373,7 @@ class CommandService:
 
         return processes[-1]
 
-    @staticmethod
-    async def _collect_output(final_process: asyncssh.SSHClientProcess) -> tuple[int, str]:
+    async def _collect_output(self, final_process: asyncssh.SSHClientProcess) -> tuple[int, str]:
         """Drain stdout and stderr from the final pipeline process.
 
         Merges both streams into a single output string (stdout first,
@@ -405,8 +389,7 @@ class CommandService:
         final_output = out_str + ("\n" + err_str if err_str and out_str else err_str)
         return final_process.returncode, final_output
 
-    @staticmethod
-    async def _handle_async_execution(context: ExecutionContext) -> CommandExecutionResponse:
+    async def _handle_async_execution(self, context: ExecutionContext) -> CommandExecutionResponse:
         """Register a background task for pipeline execution with timeout control.
 
         Immediately returns ``status: running`` with a ``command_id``.
@@ -425,9 +408,23 @@ class CommandService:
             killable=context.cmd_config.killable,
             conn=context.conn
         )
-        running_commands_pool[command_id] = entry
+        _local_running_commands[command_id] = entry
 
         timeout_seconds = context.raw_request.option.timeout_seconds if context.raw_request.option.timeout_seconds else settings.COMMAND_DEFAULT_TIMEOUT
+        
+        state = CommandState(
+            command_id=command_id,
+            status=CommandStatus.RUNNING,
+            host=context.raw_request.host,
+            port=context.raw_request.port,
+            username=context.username,
+            ssh_config=context.raw_request.ssh_config,
+            request_id=context.request_id,
+            killable=context.cmd_config.killable,
+            pgids=[]
+        )
+        await self.repo.save(state, timeout_seconds + 30)
+
         cmd_str_preview = " | ".join(shlex.join(cmd) for cmd in context.pipeline_cmds)
         
         logger.info(
@@ -438,9 +435,18 @@ class CommandService:
         async def _execution_task():
             try:
                 # 1. Execute Pipeline
-                final_process = await CommandService._execute_pipeline(context, command_id, cmd_str_preview)
+                final_process = await self._execute_pipeline(context, command_id, cmd_str_preview)
+                
+                # Update PGIDs in Repository
+                if entry.pgids:
+                    await self.repo.update(
+                        command_id, 
+                        lambda s: setattr(s, "pgids", entry.pgids), 
+                        timeout_seconds + 30
+                    )
+
                 # 2. Collect Output
-                returncode, output = await CommandService._collect_output(final_process)
+                returncode, output = await self._collect_output(final_process)
                 
                 logger.info(
                     f"Command '{context.command_name}' finished. Exit Status: {returncode}",
@@ -451,7 +457,7 @@ class CommandService:
                     res = CommandExecutionResponse.success(command_id=command_id, exit_status=returncode, output=output)
                 else:
                     res = CommandExecutionResponse.failed(message="", exit_status=returncode, output=output, command_id=command_id)
-                CommandService._store_result(command_id, res)
+                await self._store_result(command_id, res)
 
             except Exception as e:
                 # Abort safely inside task wrapper
@@ -466,8 +472,8 @@ class CommandService:
                     f"Command '{context.command_name}' timed out after {timeout_seconds}s.",
                     extra={"request_id": context.request_id, "username": context.username, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port}
                 )
-                await CommandService.kill_command(command_id)
-                CommandService._store_result(command_id, CommandExecutionResponse.failed(
+                await self.kill_command(command_id)
+                await self._store_result(command_id, CommandExecutionResponse.failed(
                     message="Command timed out and was killed.", command_id=command_id
                 ))
             except Exception as e:
@@ -475,20 +481,19 @@ class CommandService:
                     f"Command '{context.command_name}' failed asynchronously: {str(e)}",
                     extra={"request_id": context.request_id, "username": context.username, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port}
                 )
-                CommandService._store_result(command_id, CommandExecutionResponse.failed(
+                await self._store_result(command_id, CommandExecutionResponse.failed(
                     message=str(e), command_id=command_id
                 ))
             finally:
                 context.conn.close()
-                running_commands_pool.pop(command_id, None)
+                _local_running_commands.pop(command_id, None)
 
         entry.task = loop.create_task(_timeout_wrapper())
-        return CommandExecutionResponse(status="running", command_id=command_id)
+        return CommandExecutionResponse(status=CommandStatus.RUNNING.value, command_id=command_id)
 
-    @staticmethod
-    def _check_capacity(username: str, request_id: str) -> Optional[CommandExecutionResponse]:
+    def _check_capacity(self, username: str, request_id: str) -> Optional[CommandExecutionResponse]:
         """Return a failed response if the running pool has reached its limit, otherwise None."""
-        if len(running_commands_pool) >= settings.COMMAND_MAX_RUNNING:
+        if len(_local_running_commands) >= settings.COMMAND_MAX_RUNNING:
             logger.warning(
                 f"Max running commands reached ({settings.COMMAND_MAX_RUNNING}), rejecting new request.",
                 extra={"request_id": request_id, "username": username}
@@ -498,8 +503,7 @@ class CommandService:
             )
         return None
 
-    @staticmethod
-    async def execute_command(username: str, request_id: str, req: CommandExecutionRequest) -> CommandExecutionResponse:
+    async def execute_command(self, username: str, request_id: str, req: CommandExecutionRequest) -> CommandExecutionResponse:
         """Top-level orchestrator for SSH command execution.
 
         Coordinates the full lifecycle:
@@ -510,30 +514,29 @@ class CommandService:
 
         Never raises; all failures are returned as ``CommandExecutionResponse.failed()``.
         """
-        rejected = CommandService._check_capacity(username, request_id)
+        rejected = self._check_capacity(username, request_id)
         if rejected:
             return rejected
 
         try:
-            context = CommandService._prepare_execution(username, request_id, req)
+            context = self._prepare_execution(username, request_id, req)
         except CommandExecutionException as e:
             return CommandExecutionResponse.failed(str(e))
 
-        context.pipeline_cmds = CommandService._build_pipeline(context)
+        context.pipeline_cmds = self._build_pipeline(context)
 
         try:
-            conn = await CommandService._connect(context, req)
+            conn = await self._connect(context, req)
             context.conn = conn
         except CommandExecutionException as e:
              return CommandExecutionResponse.failed(str(e))
 
         if context.cmd_config.disconnects_ssh:
-            return await CommandService._handle_fire_and_forget(context)
+            return await self._handle_fire_and_forget(context)
 
-        return await CommandService._handle_async_execution(context)
+        return await self._handle_async_execution(context)
 
-    @staticmethod
-    async def kill_command(command_id: str):
+    async def kill_command(self, command_id: str):
         """Terminate a running command using two-phase PGID-based kill.
 
         Phase 1: ``kill -TERM -{pgid}`` (soft kill, allows graceful shutdown).
@@ -542,16 +545,51 @@ class CommandService:
 
         Skips silently if the command_id is not found or not killable.
         """
-        entry = running_commands_pool.get(command_id)
-        if not entry:
-            return
-        
-        if not entry.killable:
-            logger.warning(f"Command {command_id} is not killable.", extra={"command_id": command_id})
+        # 1. Try Local Kill First
+        entry = _local_running_commands.get(command_id)
+        if entry:
+            if not entry.killable:
+                logger.warning(f"Command {command_id} is not killable.", extra={"command_id": command_id})
+                return
+            await self._do_kill_via_connection(entry.conn, entry.pgids, command_id)
             return
 
-        conn = entry.conn
-        for pgid in entry.pgids:
+        # 2. Try Cross-Pod Kill via Repository
+        try:
+            state = await self.repo.get(command_id)
+        except CommandExecutionException:
+            return  # Record not found
+
+        if not state.is_running:
+            return
+
+        if not state.killable:
+            logger.warning(f"Command {command_id} is not killable.", extra={"command_id": command_id})
+            return
+            
+        if not state.pgids:
+            return # No processes assigned yet
+
+        logger.info(f"Initiating cross-pod kill for {command_id} on {state.host}:{state.port}")
+        
+        ssh_config = self._load_ssh_config(state.ssh_config)
+        authenticator = create_authenticator(ssh_config)
+        conn_kwargs = authenticator.get_connect_kwargs()
+        
+        try:
+            conn = await asyncio.wait_for(
+                asyncssh.connect(host=state.host, port=state.port, username=state.username, **conn_kwargs),
+                timeout=10
+            )
+            try:
+                await self._do_kill_via_connection(conn, state.pgids, command_id)
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.error(f"Failed cross-pod kill for {command_id}: {e}", extra={"command_id": command_id})
+
+    async def _do_kill_via_connection(self, conn: asyncssh.SSHClientConnection, pgids: List[int], command_id: str):
+        for pgid in pgids:
             try:
                 logger.info(f"Soft killing PGID {pgid}", extra={"command_id": command_id})
                 await conn.run(f"kill -TERM -{pgid}", check=False)
@@ -563,14 +601,13 @@ class CommandService:
             except Exception as e:
                 logger.error(f"Error killing PGID {pgid}: {e}", extra={"command_id": command_id})
 
-    @staticmethod
-    async def shutdown_gracefully():
+    async def shutdown_gracefully(self):
         """Kill all active commands during application shutdown.
 
         Called by the FastAPI lifespan handler to ensure no orphan processes
         remain on remote hosts after the API server stops.
         """
-        logger.info(f"Shutting down {len(running_commands_pool)} running commands gracefully.")
-        tasks = [CommandService.kill_command(cmd_id) for cmd_id in list(running_commands_pool.keys())]
+        logger.info(f"Shutting down {len(_local_running_commands)} running commands gracefully.")
+        tasks = [self.kill_command(cmd_id) for cmd_id in list(_local_running_commands.keys())]
         if tasks:
             await asyncio.gather(*tasks)

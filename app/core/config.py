@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     COMMAND_MAX_RUNNING: int = 50
     SSH_CONNECT_TIMEOUT_SECONDS: int = 30
 
+    # ── Redis ─────────────────────────────────────────────────────────────────
+    REDIS_URL: str = "redis://localhost:6379/0"
+    COMMAND_RESULT_TTL_SECONDS: int = 86400
+
     model_config = SettingsConfigDict(
         # Load order: .env (base) → .env.{APP_ENV} (env-specific overrides).
         # Missing files are silently ignored, so a plain .env alone is enough.

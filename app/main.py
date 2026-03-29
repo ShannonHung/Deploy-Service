@@ -64,7 +64,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _logger.info(
         "Shutting down %s — goodbye.", settings.APP_NAME
     )
-    await CommandService.shutdown_gracefully()
+    
+    from app.core.redis_client import RedisClient
+    from app.repositories.command_state_repository import CommandStateRepository
+    try:
+        redis = await RedisClient.get_client()
+        repo = CommandStateRepository(redis)
+        svc = CommandService(repo)
+        await svc.shutdown_gracefully()
+    except Exception as e:
+        _logger.error(f"Error during graceful shutdown: {e}")
+
+    await RedisClient.close()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

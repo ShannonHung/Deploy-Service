@@ -36,6 +36,15 @@ install:
 setup-ssh-nodes:
 	chmod +x scripts/setup_ssh_nodes.sh && ./scripts/setup_ssh_nodes.sh
 
+# ─── Redis Setup ─────────────────────────────────────────────────────────────
+.PHONY: redis-up
+redis-up:
+	docker-compose up -d
+
+.PHONY: redis-down
+redis-down:
+	docker-compose down -v
+
 # ─── Run ─────────────────────────────────────────────────────────────────────
 # start: 只讀 .env（不設 APP_ENV，適合生產部署只有單一 .env 的情境）
 .PHONY: start
@@ -44,7 +53,7 @@ start:
 
 # dev: 讀 .env + .env.dev（.env.dev 的值會覆蓋 .env）
 .PHONY: dev
-dev:
+dev: redis-up
 	APP_ENV=dev $(UV) run uvicorn app.main:app --reload --port 8001
 
 # prod: 讀 .env + .env.prod（.env.prod 的值會覆蓋 .env）

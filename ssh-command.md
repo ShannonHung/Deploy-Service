@@ -333,50 +333,63 @@ if res.exit_status == 0:
 
 ---
 
-## 7. Running Pool 與 Results Pool
+## 7. 分布式狀態管理 (Redis 整合)
 
-### 雙池架構
+### 為什麼引入 Redis？
 
-系統使用兩個獨立的記憶體池來管理指令的生命週期：
+在單一服務實例 (Single Node) 的架構下，指令狀態原使用記憶體字典。但當部屬至 K8s 形成多個 Pod 時，這會導致：「Pod A 執行命令」，但「Pod B 查詢命令」時回報找不到狀態的情境。
+
+為解決此問題，系統改採 **Redis + Local State 的混合架構**：
 
 ```
-              API 發起指令
-                  │
-                  ▼
-         ┌─────────────────┐
-         │ running_commands │  ← Dict[command_id, RunningCommandEntry]
-         │      pool        │     包含 conn, task, processes, pgids
-         └────────┬────────┘
-                  │ 指令完成 / 逾時 / 失敗
-                  ▼
-         ┌─────────────────┐
-         │ command_results  │  ← Dict[command_id, CommandExecutionResponse]
-         │      pool        │     包含 status, output, exit_status
-         └─────────────────┘
+               API 發起指令 (Pod A)
+                   │
+                   ▼
+          ┌──────────────────────────┐
+          │ _local_running_commands   │  ← Dict[command_id, RunningCommandEntry]
+          │   (只存活於當下 Pod)        │     保存實際的 SSH conn, processes 供後續管理
+          └──────────┬───────────────┘
+                     │ 初始化狀態寫入 Redis
+                     ▼
+          ┌──────────────────────────┐
+          │  command:{command_id}     │  ← Redis (JSON 格式)
+          │  "status": "running"      │     包含 host, pgids 等 metadata
+          └──────────┬───────────────┘
+                     │ 指令完成 / 逾時 / 失敗
+                     ▼
+          ┌──────────────────────────┐     發起指令的 Pod A 原地更新狀態
+          │  command:{command_id}     │  ← Redis (JSON 格式)
+          │  "status": "success"      │    其他 Pod (如 Pod B) 皆可打 API 取出這個 JSON
+          │  (並寫入 output, exit_code)│    並動態轉為 CommandExecutionResponse
+          └──────────────────────────┘
 ```
 
-### 輪詢 API
+相比於拆分 `running` 和 `result` 兩個斷點，這個單一 JSON 設計實現了一個**完美的 State Machine**，根絕了同時讀到或讀不到兩個鍵所產生的 Race Condition，並讓資料在 RedisInsight 內呈現得既完整又直觀。
+
+### 輪詢與狀態查詢
 
 因為長時間執行的指令會在背景 Task 中完成，客戶端需要靠輪詢來取得結果：
 
 ```
 GET /api/v1/command/execution/{command_id}
 
-→ 若在 running_commands_pool → { "status": "running" }
-→ 若在 command_results_pool  → { "status": "success" | "failed", "output": "...", "exit_status": 0 }
-→ 若兩者都找不到          → HTTP 404
+→ 讀取 Redis `command:{id}` 
+   → 不存在: HTTP 404
+   → 存在: 依內部 `status` 屬性回傳最終結構
 ```
 
-### LRU 快取上限
+### TTL 自動過期
 
-`command_results_pool` 設有 `MAX_RESULTS_POOL_SIZE = 200` 的上限。每次寫入新結果時，若超出上限則自動刪除最舊的紀錄（FIFO）：
+所有寫入 Redis 的紀錄皆設計有 TTL，以保證垃圾回收回收並防止死結：
+- **Running (Timeout) 階段 TTL**: 起始設定為 `Timeout + 30 秒`。這是一個避免死結的保險機制：如果負責執行的 Pod 途中發生崩潰 (Crash / OOM 等)，它將無法把最終結果寫回 Redis。這時 `command:{id}` 會自動在幾秒後因 TTL 到期而**消失**。前端再次輪詢取得 HTTP 404 後即能判斷該任務已經異常失效。
+- **Result 階段 TTL**: 完成時展延，透過環境變數 `COMMAND_RESULT_TTL_SECONDS` 控制（預設 24 小時），這 24 小時內我們保留了原始的 metadata 與日誌以供事後稽核與調閱。
 
-```python
-def _prune_results_pool():
-    while len(command_results_pool) > MAX_RESULTS_POOL_SIZE:
-        oldest_key = next(iter(command_results_pool))
-        command_results_pool.pop(oldest_key, None)
-```
+### 跨 Pod 中止指令 (Cross-Pod Kill)
+
+這是架構中最核心的強化：若 **Pod B** 收到終止某指令的請求 (`kill_command(id)`)，但該指令是由 **Pod A** 起頭的：
+1. **本機檢查**：Pod B 先查自己的 `_local_running_commands`，找不到。
+2. **防呆與資料讀取**：去讀取 Redis `command:{id}`。若發現裡面記錄的 `"status" != "running"`，則代表已經結束，提早停止操作。否則將抓出 `host, username, pgids`。
+3. **無縫接管**：Pod B 動態建立一個**全新且短暫的 SSH 連線**至目標主機，對該指令遺留的 `PGID` 發送 `kill -TERM` 與 `kill -KILL`，然後關閉臨時連線。保證了在 K8s 多副本環境下的指令殺傷力與高可用性。
 
 ---
 
@@ -387,12 +400,12 @@ def _prune_results_pool():
 ```python
 async def shutdown_gracefully():
     tasks = [CommandService.kill_command(cmd_id)
-             for cmd_id in list(running_commands_pool.keys())]
+             for cmd_id in list(_local_running_commands.keys())]
     if tasks:
         await asyncio.gather(*tasks)
 ```
 
-此方法會遍歷所有仍在 `running_commands_pool` 中的活躍指令，對每一個執行兩階段 kill，確保遠端主機上不會殘留孤兒進程。
+此方法會遍歷所有本 Pod 仍在 `_local_running_commands` 中的活躍指令，對每一個執行兩階段 kill，確保遠端主機上不會殘留孤兒進程。
 
 ---
 
@@ -405,12 +418,12 @@ async def shutdown_gracefully():
 
 系統透過兩道防護機制來確保穩定性：
 
-### 防護 1：Running Pool 上限（Hard Ceiling）
+### 防護 1：Running Pool 上限 (Pod Level Hard Ceiling)
 
-在 `execute_command()` 入口處，檢查當前 `running_commands_pool` 的大小。若已達上限，**直接拒絕新請求**，不會建立 SSH 連線：
+在 `execute_command()` 入口處，檢查當前 `_local_running_commands` 的大小。若該 Pod 已達連線上限，**直接拒絕新請求**，不會建立 SSH 連線：
 
 ```python
-if len(running_commands_pool) >= settings.COMMAND_MAX_RUNNING:
+if len(_local_running_commands) >= settings.COMMAND_MAX_RUNNING:
     return CommandExecutionResponse.failed(
         "Too many running commands (limit: 50). Please try again later."
     )
@@ -435,9 +448,9 @@ async def _timeout_wrapper():
   │
   ▼
 ┌──────────────────────────────────┐
-│ running_commands_pool < 50？     │──否──▶ 回傳 failed（拒絕）
+│ _local_running_commands < 50？    │──否──▶ 回傳 failed（拒絕）
 └──────────┬───────────────────────┘
-           │ 是（進入 pool）
+           │ 是（進入 pool 並寫入 Redis）
            ▼
 ┌──────────────────────────────────┐
 │ Semaphore 有空位（< 20）？       │──否──▶ 排隊等待（不佔 SSH）
@@ -451,7 +464,7 @@ async def _timeout_wrapper():
 
 | 變數 | 預設值 | 說明 |
 |---|---|---|
-| `COMMAND_MAX_RUNNING` | `50` | `running_commands_pool` 的最大容量，超過直接拒絕 |
+| `COMMAND_MAX_RUNNING` | `50` | `_local_running_commands` 的最大容量（單一 Pod 內），超過直接拒絕 |
 | `COMMAND_MAX_CONCURRENCY` | `20` | 同一時間實際並行執行 SSH 指令的上限 |
 | `SSH_CONNECT_TIMEOUT_SECONDS` | `30` | 建立 SSH 連線時的最長等待秒數 |
 | `COMMAND_KILL_GRACE_SECONDS` | `2` | 軟殺後等待進程自行終止的秒數 |

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Request, HTTPException
 from app.domain.command import CommandExecutionRequest, CommandExecutionResponse, UserCommandWhitelist, CommandWhitelistConfig
 from app.services.command_service import CommandService
 from app.core.exceptions import CommandExecutionException
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, get_command_service
 from app.domain.models import User, ApiResponse
 
 _logger = logging.getLogger(__name__)
@@ -22,9 +22,10 @@ def _request_id(request: Request) -> str:
 async def get_all_commands_info(
     request: Request,
     current_user: User = Depends(get_current_user(["command_api"])),
+    svc: CommandService = Depends(get_command_service),
 ) -> ApiResponse[UserCommandWhitelist]:
     try:
-        whitelist = CommandService.get_user_commands(current_user.account)
+        whitelist = svc.get_user_commands(current_user.account)
         return ApiResponse(data=whitelist, request_id=_request_id(request))
     except CommandExecutionException as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -38,9 +39,10 @@ async def get_specific_command_info(
     command_name: str,
     request: Request,
     current_user: User = Depends(get_current_user(["command_api"])),
+    svc: CommandService = Depends(get_command_service),
 ) -> ApiResponse[CommandWhitelistConfig]:
     try:
-        cmd_info = CommandService.get_command_info(current_user.account, command_name)
+        cmd_info = svc.get_command_info(current_user.account, command_name)
         return ApiResponse(data=cmd_info, request_id=_request_id(request))
     except CommandExecutionException as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -54,9 +56,10 @@ async def execute_command_endpoint(
     request: Request,
     body: CommandExecutionRequest,
     current_user: User = Depends(get_current_user(["command_api"])),
+    svc: CommandService = Depends(get_command_service),
 ) -> ApiResponse[CommandExecutionResponse]:
     req_id = _request_id(request)
-    response_data = await CommandService.execute_command(current_user.account, req_id, body)
+    response_data = await svc.execute_command(current_user.account, req_id, body)
     return ApiResponse(data=response_data, request_id=req_id)
 
 @router.get(
@@ -68,9 +71,10 @@ async def get_command_execution_status(
     command_id: str,
     request: Request,
     current_user: User = Depends(get_current_user(["command_api"])),
+    svc: CommandService = Depends(get_command_service),
 ) -> ApiResponse[CommandExecutionResponse]:
     try:
-        response_data = CommandService.get_command_execution_result(command_id)
+        response_data = await svc.get_command_execution_result(command_id)
         return ApiResponse(data=response_data, request_id=_request_id(request))
     except CommandExecutionException as e:
         raise HTTPException(status_code=404, detail=str(e))

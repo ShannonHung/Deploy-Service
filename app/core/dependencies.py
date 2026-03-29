@@ -61,3 +61,14 @@ def get_current_user(required_scopes: list[str] | None = None) -> Callable:
         return User(account=account, scopes=scopes)
 
     return _dependency
+
+from app.core.redis_client import RedisClient
+from app.repositories.command_state_repository import CommandStateRepository
+from app.services.command_service import CommandService
+
+async def get_command_state_repository() -> CommandStateRepository:
+    redis = await RedisClient.get_client()
+    return CommandStateRepository(redis)
+
+async def get_command_service(repo: CommandStateRepository = Depends(get_command_state_repository)) -> CommandService:
+    return CommandService(repo)
