@@ -25,6 +25,8 @@ class CommandWhitelistConfig(BaseModel):
 
 class UserCommandWhitelist(BaseModel):
     name: str = "admin"
+    allow_hosts: List[str] = [".*"]
+    deny_hosts: List[str] = []
     allow_commands: List[CommandWhitelistConfig]
 
 

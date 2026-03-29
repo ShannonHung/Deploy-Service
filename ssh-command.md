@@ -108,10 +108,19 @@ class ExecutionContext:
 
 | 欄位 | 用途 |
 |---|---|
+| `allow_hosts` | 允許發送指令的 Host IP/Hostname 正則表達式列表。預設為 `[".*"]`。 |
+| `deny_hosts` | 禁止發送指令的 Host IP/Hostname 正則表達式列表（黑名單優先）。預設為 `[]`。 |
 | `pipeline` | 依序執行的指令陣列，每個 step 是一個 `command: List[str]`。多個 step 會透過 Python 管線串接（stdin → stdout）。 |
 | `arguments` | 使用者可替換的 `{placeholder}` 參數定義。每一個必須包含 `validation_regex` 來限縮合法輸入範圍。 |
-| `disconnects_ssh` | 設為 `true` 時，系統預期指令會主動切斷 SSH 連線（如 `reboot`），走「Fire-and-Forget」路徑。 |
+| `disconnects_ssh` | 設為 `true`時，系統預期指令會主動切斷 SSH 連線（如 `reboot`），走「Fire-and-Forget」路徑。 |
 | `killable` | 是否允許在 timeout 時主動 kill 該指令的進程群組。 |
+
+### 主機存取控制 (Host Filtering)
+
+在 `_prepare_execution` 階段，系統會根據設定檔中的 `deny_hosts` 與 `allow_hosts` 進行正則匹配校驗：
+1. **黑名單優先**：若目標 Host 匹配 `deny_hosts` 中的任一項目，立即拒絕。
+2. **白名單校驗**：若目標 Host 不匹配 `allow_hosts` 中的任何項目，亦會拒絕。
+
 
 ### Python-Side 管線串接
 
@@ -305,19 +314,11 @@ if res.exit_status == 0:
 
 ### 雙模式偵測
 
-`_handle_fire_and_forget()` 不會盲目回傳「已發送」，而是根據實際情況做出精準判斷：
+`_handle_fire_and_forget()` 透過以下邏輯精準判斷指令是否成功觸發了重啟或斷線：
 
-```
-conn.run(cmd) 執行
-    │
-    ├── 連線斷開 → Exception 被捕獲
-    │   └── 回傳 status: "disconnected_expected" ✅
-    │       (這就是正確的 reboot 行為)
-    │
-    └── 指令正常完成 → 沒有 Exception
-        └── 回傳 status: "failed" + 完整 output ⚠️
-            (遠端沒有真的斷線，可能是權限不足或環境問題)
-```
+1. **連線主動中斷**：若在執行期間捕獲 `asyncssh.ConnectionLost`，視為「成功觸發斷線」。
+2. **狀態檢查**：若指令執行完畢後 `conn.is_closed()` 為 `true`，視為「成功觸發斷線」。
+3. **未斷線判定**：若指令執行完畢且連線依然存活，則視為 `failed`。這通常發生在權限不足或環境不支援（如 Docker 容器內執行 `reboot`）的情況。
 
 **真實案例**：Docker 容器通常不支援 `systemd` 的 `reboot`，指令會失敗但不會斷線。在修正前，系統會錯誤地回傳 `disconnected_expected`，讓使用者以為 reboot 成功了。現在系統會正確回傳錯誤訊息：
 
@@ -452,6 +453,7 @@ async def _timeout_wrapper():
 |---|---|---|
 | `COMMAND_MAX_RUNNING` | `50` | `running_commands_pool` 的最大容量，超過直接拒絕 |
 | `COMMAND_MAX_CONCURRENCY` | `20` | 同一時間實際並行執行 SSH 指令的上限 |
+| `SSH_CONNECT_TIMEOUT_SECONDS` | `30` | 建立 SSH 連線時的最長等待秒數 |
 | `COMMAND_KILL_GRACE_SECONDS` | `2` | 軟殺後等待進程自行終止的秒數 |
 | `COMMAND_DEFAULT_TIMEOUT` | `30` | 未指定 timeout 時的預設逾時秒數 |
 
@@ -463,17 +465,25 @@ async def _timeout_wrapper():
 
 ```python
 logger.info(
-    "Initiating command 'sleep' (sleep 180) with timeout 60s.",
+    "Initiating command 'sleep' (sleep 180) to 192.168.1.10:22 with timeout 60s.",
     extra={
         "request_id": "e26daab9-30df-...",
         "username": "admin",
-        "command_id": "5908e5af-4d3d-..."
+        "command_id": "5908e5af-4d3d-...",
+        "host": "192.168.1.10",
+        "port": 22
     }
 )
 ```
 
+### 可追溯性 (Traceability)
+
+日誌 format 已包含 `target=%(host)s:%(port)s`，非指令相關日誌會顯示 `target=-:-`。
+
 日誌涵蓋的關鍵事件：
-- 指令發起（含完整解析後的指令字串）
+- 指令發起（含目標 Host/Port 與完整解析後的指令字串）
+- SSH 連線超時或失敗事件（包含目標資訊）
+- 主機過濾遭拒事件（黑白名單觸發）
 - PGID 分配
 - 指令完成（含 exit status）
 - 逾時與進程獵殺
@@ -488,8 +498,8 @@ logger.info(
 | 檔案 | 職責 |
 |---|---|
 | `app/services/command_service.py` | 核心服務，含 Orchestrator、Pipeline 執行、Kill 邏輯 |
-| `app/domain/command.py` | Domain Models：`SSHConnectionConfig`、`RunningCommandEntry`、`ExecutionContext` |
-| `app/api/v1/schemas/command.py` | API Schema：Request/Response 模型、Factory Methods |
+| `app/domain/command.py` | 領域模型：統一存放 Request/Response/Whitelist/Runtime Models |
+| `app/api/v1/schemas/command.py` | API Schema：轉變為指向 domain.command 的 re-export 墊片 |
 | `app/api/v1/command.py` | API Routes：`/execution`、`/execution/{id}`、`/info` |
 | `app/core/config.py` | Settings：環境變數配置（含並行限制參數） |
 | `app/repositories/ssh_auth_repository.py` | SSH 認證工廠（支援 Key / Certificate） |

@@ -144,6 +144,22 @@ class CommandService:
         """
         whitelist = CommandService._load_user_whitelist(username)
         
+        # Check host against deny list (blacklist)
+        if any(re.match(pattern, req.host) for pattern in whitelist.deny_hosts):
+            logger.warning(
+                f"Host '{req.host}' is blocked for user '{username}' by deny list.",
+                extra={"request_id": request_id, "username": username, "host": req.host}
+            )
+            raise CommandExecutionException(f"Host '{req.host}' is blocked.")
+
+        # Check host against allow list (whitelist)
+        if not any(re.match(pattern, req.host) for pattern in whitelist.allow_hosts):
+            logger.warning(
+                f"Host '{req.host}' is not allowed for user '{username}' by allow list.",
+                extra={"request_id": request_id, "username": username, "host": req.host}
+            )
+            raise CommandExecutionException(f"Host '{req.host}' is not allowed.")
+        
         cmd_config = next((c for c in whitelist.allow_commands if c.command_name == req.command_name), None)
         if not cmd_config:
             raise CommandExecutionException(f"Command '{req.command_name}' not found in whitelist.")
