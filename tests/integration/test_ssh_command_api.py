@@ -12,7 +12,9 @@ def test_execute_list_file(client: TestClient):
         headers={"Authorization": f"Bearer {token}"},
         json={
             "command_name": "list_file",
-            "ip_address": "localhost",
+            "host": "localhost",
+            "port": 2222,
+            "username": "root",
             "ssh_config": "cluster1",
             "option": {"timeout_seconds": 10},
             "arguments": {"key_word": "ssh"}
@@ -31,7 +33,9 @@ def test_execute_invalid_argument_regex(client: TestClient):
         headers={"Authorization": f"Bearer {token}"},
         json={
             "command_name": "sleep",
-            "ip_address": "localhost",
+            "host": "localhost",
+            "port": 2222,
+            "username": "root",
             "arguments": {"time": "notanint"}
         }
     )
@@ -47,8 +51,10 @@ def test_execute_reboot_fire_and_forget(client: TestClient):
         headers={"Authorization": f"Bearer {token}"},
         json={
             "command_name": "reboot",
-            "ip_address": "localhost",
-            "ssh_config": "default",
+            "host": "localhost",
+            "port": 2222,
+            "username": "root",
+            "ssh_config": "cluster1",
             "arguments": {}
         }
     )

@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     COMMAND_KILL_GRACE_SECONDS: int = 2
     COMMAND_MAX_CONCURRENCY: int = 20
     COMMAND_MAX_RUNNING: int = 50
+    SSH_CONNECT_TIMEOUT_SECONDS: int = 30
 
     model_config = SettingsConfigDict(
         # Load order: .env (base) → .env.{APP_ENV} (env-specific overrides).

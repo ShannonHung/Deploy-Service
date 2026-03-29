@@ -8,9 +8,12 @@ import shlex
 import asyncssh
 from typing import Dict, Any, List, Optional
 
-from app.api.v1.schemas.command import CommandExecutionRequest, CommandExecutionResponse, UserCommandWhitelist, CommandWhitelistConfig
+from app.domain.command import (
+    CommandExecutionRequest, CommandExecutionResponse,
+    UserCommandWhitelist, CommandWhitelistConfig,
+    SSHConnectionConfig, RunningCommandEntry, ExecutionContext,
+)
 from app.core.config import get_settings
-from app.domain.command import SSHConnectionConfig, RunningCommandEntry, ExecutionContext
 from app.repositories.ssh_auth_repository import create_authenticator
 from app.core.exceptions import CommandExecutionException
 
@@ -194,68 +197,105 @@ class CommandService:
         ]
 
     @staticmethod
-    async def _connect(context: ExecutionContext) -> asyncssh.SSHClientConnection:
+    async def _connect(context: ExecutionContext, req: CommandExecutionRequest) -> asyncssh.SSHClientConnection:
         """Establish an SSH connection to the target host.
 
         Delegates credential handling to the authenticator resolved from
         ``context.ssh_config`` (key-based or certificate-based).
+        Connection attempt is bounded by ``SSH_CONNECT_TIMEOUT_SECONDS``.
 
         Raises:
-            CommandExecutionException: If the connection cannot be established.
+            CommandExecutionException: If the connection cannot be established or times out.
         """
         authenticator = create_authenticator(context.ssh_config)
         conn_kwargs = authenticator.get_connect_kwargs()
+        target = f"{req.host}:{req.port}"
         try:
-            conn = await asyncssh.connect(
-                context.ssh_config.host, 
-                port=context.ssh_config.port, 
-                username=context.ssh_config.username, 
-                **conn_kwargs
+            conn = await asyncio.wait_for(
+                asyncssh.connect(
+                    host=req.host,
+                    port=req.port,
+                    username=req.username,
+                    **conn_kwargs
+                ),
+                timeout=settings.SSH_CONNECT_TIMEOUT_SECONDS,
             )
             return conn
+        except asyncio.TimeoutError:
+            raise CommandExecutionException(
+                f"SSH connection to {target} timed out after {settings.SSH_CONNECT_TIMEOUT_SECONDS}s."
+            )
         except Exception as e:
-            raise CommandExecutionException(f"SSH Connection Failed: {str(e)}")
+            raise CommandExecutionException(f"SSH Connection Failed ({target}): {str(e)}")
 
     @staticmethod
     async def _handle_fire_and_forget(context: ExecutionContext) -> CommandExecutionResponse:
         """Execute a command that is expected to sever the SSH connection (e.g. reboot).
 
         Uses dual-mode detection:
-          - If the connection drops (Exception raised) → ``disconnected_expected``.
-          - If the command completes normally → the remote did NOT reboot;
-            returns ``failed`` with the actual stdout/stderr so the caller
-            can see why (e.g. missing systemd).
+          1. Run the command and wait for it to finish.
+          2. After completion, check ``conn.is_closed()``.
+             - Closed → the remote host disconnected as expected → ``success``.
+             - Still open → the command completed without severing → ``failed``
+               with stdout/stderr so the caller can see why.
+          3. If ``ConnectionLost`` is raised mid-execution → ``success``.
         """
         conn = context.conn
+        target = f"{context.raw_request.host}:{context.raw_request.port}"
+        log_extra = {
+            "request_id": context.request_id, "username": context.username,
+            "host": context.raw_request.host, "port": context.raw_request.port,
+        }
         try:
             cmd_line = context.pipeline_cmds[0]
             cmd_str_preview = shlex.join(cmd_line)
             logger.info(
-                f"Dispatching fire-and-forget command '{context.command_name}': {cmd_str_preview}",
-                extra={"request_id": context.request_id, "username": context.username}
+                f"Dispatching fire-and-forget command '{context.command_name}' to {target}: {cmd_str_preview}",
+                extra=log_extra,
             )
             
             result = await conn.run(cmd_str_preview, check=False)
+
+            # After the command returns, check whether the connection was severed.
+            if conn.is_closed():
+                logger.info(
+                    f"Connection to {target} closed after '{context.command_name}' — expected behaviour.",
+                    extra=log_extra,
+                )
+                return CommandExecutionResponse(
+                    status="success",
+                    message=f"Command dispatched and connection to {target} dropped as expected.",
+                )
             
+            # Connection is still alive — the command did NOT cause a disconnect.
             out_str = result.stdout if isinstance(result.stdout, str) else result.stdout.decode('utf-8') if result.stdout else ""
             err_str = result.stderr if isinstance(result.stderr, str) else result.stderr.decode('utf-8') if result.stderr else ""
             final_output = out_str + ("\n" + err_str if err_str and out_str else err_str)
                 
             logger.warning(
-                f"Fire-and-forget command '{context.command_name}' unexpectedly completed without disconnecting.",
-                extra={"request_id": context.request_id, "username": context.username}
+                f"Fire-and-forget command '{context.command_name}' on {target} completed without disconnecting.",
+                extra=log_extra,
             )
             return CommandExecutionResponse.failed(
                 message="Command executed but did not disconnect the session as expected.",
                 exit_status=result.exit_status,
-                output=final_output
+                output=final_output,
+            )
+        except asyncssh.ConnectionLost:
+            logger.info(
+                f"Connection to {target} dropped as expected during '{context.command_name}'.",
+                extra=log_extra,
+            )
+            return CommandExecutionResponse(
+                status="success",
+                message=f"Command dispatched and connection to {target} dropped as expected.",
             )
         except Exception as e:
-            logger.info(
-                f"Connection dropped as expected during '{context.command_name}': {str(e)}",
-                extra={"request_id": context.request_id, "username": context.username}
+            logger.error(
+                f"Unexpected error during fire-and-forget '{context.command_name}' on {target}: {str(e)}",
+                extra=log_extra,
             )
-            return CommandExecutionResponse(status="disconnected_expected", message="Connection dropped as expected.")
+            return CommandExecutionResponse.failed(message=f"Unexpected error: {str(e)}")
         finally:
             conn.close()
 
@@ -306,7 +346,7 @@ class CommandService:
                     stderr=asyncssh.PIPE
                 )
             except Exception as e:
-                logger.error(f"Failed to create process: {e}", extra={"request_id": context.request_id, "command_id": command_id})
+                logger.error(f"Failed to create process: {e}", extra={"request_id": context.request_id, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port})
                 raise
             
             processes.append(p)
@@ -315,7 +355,7 @@ class CommandService:
                 try:
                     pgids.append(int(pgid_str.strip()))
                 except Exception:
-                    logger.error(f"Could not parse PGID from: {pgid_str}", extra={"request_id": context.request_id, "command_id": command_id})
+                    logger.error(f"Could not parse PGID from: {pgid_str}", extra={"request_id": context.request_id, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port})
             
             prev_stdout = p.stdout
 
@@ -324,7 +364,7 @@ class CommandService:
         
         logger.info(
             f"Command '{context.command_name}' ({cmd_str_preview}) PGIDs assigned: {pgids}",
-            extra={"request_id": context.request_id, "username": context.username, "command_id": command_id}
+            extra={"request_id": context.request_id, "username": context.username, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port}
         )
 
         for p in processes[:-1]:
@@ -365,7 +405,7 @@ class CommandService:
         loop = asyncio.get_running_loop()
         
         entry = RunningCommandEntry(
-            host_ip=context.ssh_config.host,
+            host_ip=context.raw_request.host,
             killable=context.cmd_config.killable,
             conn=context.conn
         )
@@ -375,8 +415,8 @@ class CommandService:
         cmd_str_preview = " | ".join(shlex.join(cmd) for cmd in context.pipeline_cmds)
         
         logger.info(
-            f"Initiating command '{context.command_name}' ({cmd_str_preview}) with timeout {timeout_seconds}s.",
-            extra={"request_id": context.request_id, "username": context.username, "command_id": command_id}
+            f"Initiating command '{context.command_name}' ({cmd_str_preview}) to {context.raw_request.host}:{context.raw_request.port} with timeout {timeout_seconds}s.",
+            extra={"request_id": context.request_id, "username": context.username, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port}
         )
 
         async def _execution_task():
@@ -388,7 +428,7 @@ class CommandService:
                 
                 logger.info(
                     f"Command '{context.command_name}' finished. Exit Status: {returncode}",
-                    extra={"request_id": context.request_id, "username": context.username, "command_id": command_id}
+                    extra={"request_id": context.request_id, "username": context.username, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port}
                 )
                 
                 if returncode == 0:
@@ -408,7 +448,7 @@ class CommandService:
             except asyncio.TimeoutError:
                 logger.warning(
                     f"Command '{context.command_name}' timed out after {timeout_seconds}s.",
-                    extra={"request_id": context.request_id, "username": context.username, "command_id": command_id}
+                    extra={"request_id": context.request_id, "username": context.username, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port}
                 )
                 await CommandService.kill_command(command_id)
                 CommandService._store_result(command_id, CommandExecutionResponse.failed(
@@ -417,7 +457,7 @@ class CommandService:
             except Exception as e:
                 logger.error(
                     f"Command '{context.command_name}' failed asynchronously: {str(e)}",
-                    extra={"request_id": context.request_id, "username": context.username, "command_id": command_id}
+                    extra={"request_id": context.request_id, "username": context.username, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port}
                 )
                 CommandService._store_result(command_id, CommandExecutionResponse.failed(
                     message=str(e), command_id=command_id
@@ -466,7 +506,7 @@ class CommandService:
         context.pipeline_cmds = CommandService._build_pipeline(context)
 
         try:
-            conn = await CommandService._connect(context)
+            conn = await CommandService._connect(context, req)
             context.conn = conn
         except CommandExecutionException as e:
              return CommandExecutionResponse.failed(str(e))

@@ -29,7 +29,9 @@ Content-Type: application/json
 
 {
     "command_name": "whoami",
-    "ip_address": "localhost",
+    "host": "localhost",
+    "port": 2222,
+    "username": "root",
     "ssh_config": "cluster1",
     "option": {
         "timeout_seconds": 30
@@ -45,7 +47,9 @@ Content-Type: application/json
 
 {
     "command_name": "sleep",
-    "ip_address": "localhost",
+    "host": "localhost",
+    "port": 2222,
+    "username": "root",
     "ssh_config": "cluster1",
     "option": {
         "timeout_seconds": 60
@@ -63,7 +67,9 @@ Content-Type: application/json
 
 {
     "command_name": "cat",
-    "ip_address": "localhost",
+    "host": "localhost",
+    "port": 2222,
+    "username": "root",
     "ssh_config": "cluster1",
     "option": {
         "timeout_seconds": 60
@@ -81,7 +87,9 @@ Content-Type: application/json
 
 {
     "command_name": "reboot",
-    "ip_address": "localhost",
+    "host": "localhost",
+    "port": 2222,
+    "username": "root",
     "ssh_config": "cluster1",
     "option": {
         "timeout_seconds": 60
