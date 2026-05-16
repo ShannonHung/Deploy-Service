@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         # Load order: .env (base) → .env.{APP_ENV} (env-specific overrides).
         # Missing files are silently ignored, so a plain .env alone is enough.
-        env_file=[".env", f".env.{os.getenv('APP_ENV', 'dev')}"],
+        env_file=[".env", f".env.{os.getenv('APP_ENV', 'dev')}", ".env.local"],
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",

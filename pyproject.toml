@@ -18,6 +18,7 @@ dependencies = [
     "ansi2html>=1.9.2",
     "asyncssh>=2.14.0",
     "redis>=5.0.0",
+    "prometheus-fastapi-instrumentator>=7.0.0",
 ]
 
 [dependency-groups]
