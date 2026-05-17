@@ -48,7 +48,8 @@ def test_trigger_pipeline_with_custom_project(client, mock_repo, mock_auth):
     mock_repo.assert_called_with(
         url=get_settings().GITLAB_URL,
         token="special-token",
-        project_id=999
+        project_id=999,
+        trace_cache=None,
     )
 
 def test_trigger_pipeline_default_project(client, mock_repo):
@@ -71,5 +72,6 @@ def test_trigger_pipeline_default_project(client, mock_repo):
     mock_repo.assert_called_with(
         url=settings.GITLAB_URL,
         token=settings.GITLAB_TOKEN,
-        project_id=settings.GITLAB_PROJECT_ID
+        project_id=settings.GITLAB_PROJECT_ID,
+        trace_cache=None,
     )

@@ -11,15 +11,28 @@ Error handling strategy:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 import gitlab
 import gitlab.exceptions
+from starlette.concurrency import run_in_threadpool
 
-from app.core.exceptions import GitlabOperationException, NotFoundException
-from app.domain.pipeline_models import JobData, PipelineData, PipelineVariable
+from app.core.config import get_settings
+from app.core.exceptions import (
+    GitlabOperationException,
+    NotFoundException,
+    UpstreamTimeoutException,
+)
+from app.domain.pipeline_models import (
+    DownstreamPipelineRef,
+    JobData,
+    PipelineData,
+    PipelineVariable,
+)
 from app.repositories.pipeline_repository import PipelineRepository
+from app.repositories.trace_cache_repository import TraceCacheRepository
 
 _logger = logging.getLogger(__name__)
 
@@ -32,6 +45,11 @@ _ACTIVE_STATUSES = [
     "running",
 ]
 
+# Job statuses for which the trace is guaranteed immutable and safe to cache.
+_TERMINAL_JOB_STATUSES = frozenset(
+    {"success", "failed", "canceled", "skipped"}
+)
+
 
 class GitlabPipelineRepository(PipelineRepository):
     """Uses python-gitlab to talk to the GitLab Pipelines API."""
@@ -41,9 +59,11 @@ class GitlabPipelineRepository(PipelineRepository):
         url: str,
         token: str,
         project_id: int,
+        trace_cache: TraceCacheRepository | None = None,
     ) -> None:
         self._gl = gitlab.Gitlab(url=url, private_token=token)
         self._project_id = project_id
+        self._trace_cache = trace_cache
 
     # ── private helpers ───────────────────────────────────────────────────────
 
@@ -102,6 +122,35 @@ class GitlabPipelineRepository(PipelineRepository):
         except gitlab.exceptions.GitlabError:
             return []
 
+    def _collect_downstream_pipelines(
+        self, project: Any, pipeline_id: int
+    ) -> list[DownstreamPipelineRef]:
+        """Return downstream pipelines triggered by bridge jobs in this pipeline.
+
+        Best-effort: any GitLab error → empty list (matches the other
+        ``_collect_*`` helpers). Bridges whose ``downstream_pipeline`` is
+        ``None`` (trigger not yet fired) are omitted.
+        """
+        try:
+            bridges = project.pipelines.get(pipeline_id).bridges.list(get_all=True)
+            result: list[DownstreamPipelineRef] = []
+            for bridge in bridges:
+                downstream = getattr(bridge, "downstream_pipeline", None)
+                if not downstream:
+                    continue
+                result.append(
+                    DownstreamPipelineRef(
+                        id=downstream["id"],
+                        status=downstream["status"],
+                        web_url=downstream.get("web_url", ""),
+                        project_id=downstream["project_id"],
+                        bridge_name=getattr(bridge, "name", ""),
+                    )
+                )
+            return result
+        except (gitlab.exceptions.GitlabError, KeyError, TypeError):
+            return []
+
     def _to_pipeline_data(self, pipeline: Any, project: Any) -> PipelineData:
         """Map a python-gitlab Pipeline object → PipelineData."""
         pid: int = pipeline.id
@@ -115,6 +164,7 @@ class GitlabPipelineRepository(PipelineRepository):
             tag_list=self._collect_job_tags(project, pid),
             variables=self._collect_variables(project, pid),
             jobs=self._collect_jobs(project, pid),
+            downstream_pipelines=self._collect_downstream_pipelines(project, pid),
             ref_name=getattr(pipeline, "ref", ""),
             web_url=getattr(pipeline, "web_url", ""),
         )
@@ -216,21 +266,108 @@ class GitlabPipelineRepository(PipelineRepository):
 
         return result
 
-    async def get_job_trace(self, job_id: int) -> tuple[str, str]:
-        project = self._get_project()
+    async def get_job_web_url(self, job_id: int) -> str:
+        def _fetch() -> str:
+            project = self._get_project()
+            return project.jobs.get(job_id).web_url
+
         try:
-            job = project.jobs.get(job_id)
-            # trace() returns bytes; decode to UTF-8
-            return job.status, job.trace().decode("utf-8")
+            return await run_in_threadpool(_fetch)
         except gitlab.exceptions.GitlabGetError as exc:
             if "404" in str(exc):
                 raise NotFoundException(f"Job {job_id} not found.") from exc
             raise GitlabOperationException(
-                f"Failed to fetch trace for job {job_id}.",
+                f"Failed to fetch web URL for job {job_id}.",
                 detail=str(exc),
             ) from exc
         except gitlab.exceptions.GitlabError as exc:
             raise GitlabOperationException(
-                f"Failed to fetch trace for job {job_id}.",
+                f"Failed to fetch web URL for job {job_id}.",
                 detail=str(exc),
             ) from exc
+
+    async def get_job_trace_range(
+        self, job_id: int, byte_offset: int
+    ) -> tuple[str, str, int]:
+        """Return ``(status, new_text, total_size)`` for the trace tail.
+
+        GitLab's trace endpoint does not honor HTTP Range headers — it always
+        returns the full body. We therefore enforce *byte_offset* server-side
+        by slicing locally. To avoid re-downloading the full trace on every
+        poll once a job has finished, terminal-status traces are cached in
+        Redis (gzip-compressed). Subsequent polls of a finished job are
+        served entirely from cache with zero GitLab requests.
+        """
+        settings = get_settings()
+
+        # ── Fast path: finished-job trace served from cache ───────────────
+        if self._trace_cache is not None:
+            cached = await self._trace_cache.get(self._project_id, job_id)
+            if cached is not None:
+                cached_status, cached_bytes = cached
+                tail = (
+                    cached_bytes[byte_offset:] if byte_offset else cached_bytes
+                )
+                return (
+                    cached_status,
+                    tail.decode("utf-8", errors="replace"),
+                    len(cached_bytes),
+                )
+
+        def _fetch() -> tuple[str, bytes, bytes]:
+            """Return ``(status, full_trace_bytes, tail_bytes)``."""
+            project = self._get_project()
+            job = project.jobs.get(job_id)
+            path = f"{job.manager.path}/{job.encoded_id}/trace"
+            # GitLab ignores Range headers on this endpoint; we always get
+            # the full body back and slice locally below.
+            resp = self._gl.http_get(path, raw=True, streamed=False)
+            full = resp.content
+            tail = full[byte_offset:] if byte_offset else full
+            return job.status, full, tail
+
+        try:
+            status, full, tail = await asyncio.wait_for(
+                run_in_threadpool(_fetch),
+                timeout=settings.GITLAB_TRACE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            raise UpstreamTimeoutException(
+                f"GitLab trace fetch for job {job_id} exceeded "
+                f"{settings.GITLAB_TRACE_TIMEOUT_SECONDS}s.",
+            ) from exc
+        except gitlab.exceptions.GitlabGetError as exc:
+            if "404" in str(exc):
+                raise NotFoundException(f"Job {job_id} not found.") from exc
+            raise GitlabOperationException(
+                f"Failed to fetch trace range for job {job_id}.",
+                detail=str(exc),
+            ) from exc
+        except gitlab.exceptions.GitlabError as exc:
+            raise GitlabOperationException(
+                f"Failed to fetch trace range for job {job_id}.",
+                detail=str(exc),
+            ) from exc
+
+        # Write cache once the job is terminal. The trace is immutable from
+        # this point on, so future polls bypass GitLab entirely.
+        if (
+            self._trace_cache is not None
+            and status in _TERMINAL_JOB_STATUSES
+            and full
+        ):
+            try:
+                await self._trace_cache.set(
+                    self._project_id,
+                    job_id,
+                    status,
+                    full,
+                    settings.GITLAB_TRACE_CACHE_TTL_SECONDS,
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "Trace cache write failed | project=%s job=%s | %s",
+                    self._project_id, job_id, exc,
+                )
+
+        return status, tail.decode("utf-8", errors="replace"), len(full)

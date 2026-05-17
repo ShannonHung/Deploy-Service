@@ -8,17 +8,36 @@ settings = get_settings()
 
 class RedisClient:
     _instance: Optional[redis.Redis] = None
+    _binary_instance: Optional[redis.Redis] = None
 
     @classmethod
     async def get_client(cls) -> redis.Redis:
         if cls._instance is None:
             logger.info(f"Connecting to Redis at {settings.REDIS_URL}")
             cls._instance = redis.from_url(
-                settings.REDIS_URL, 
-                encoding="utf-8", 
+                settings.REDIS_URL,
+                encoding="utf-8",
                 decode_responses=True
             )
         return cls._instance
+
+    @classmethod
+    async def get_binary_client(cls) -> redis.Redis:
+        """Return a Redis client that returns raw bytes (no auto-decode).
+
+        Use for values that are binary blobs (e.g. gzip-compressed payloads)
+        where the default ``decode_responses=True`` client would crash with
+        ``UnicodeDecodeError`` on the first non-utf-8 byte.
+        """
+        if cls._binary_instance is None:
+            logger.info(
+                f"Connecting to Redis (binary) at {settings.REDIS_URL}"
+            )
+            cls._binary_instance = redis.from_url(
+                settings.REDIS_URL,
+                decode_responses=False,
+            )
+        return cls._binary_instance
 
     @classmethod
     async def close(cls):
@@ -26,3 +45,7 @@ class RedisClient:
             logger.info("Closing Redis connection.")
             await cls._instance.aclose()
             cls._instance = None
+        if cls._binary_instance is not None:
+            logger.info("Closing Redis (binary) connection.")
+            await cls._binary_instance.aclose()
+            cls._binary_instance = None

@@ -20,7 +20,10 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
 
 from app.core.config import get_settings
-from app.core.dependencies import get_current_user
+from app.core.dependencies import (
+    get_current_user,
+    get_trace_cache_repository,
+)
 from app.core.log_viewer_template import LOG_VIEWER_HTML
 from app.domain.models import ApiResponse, User
 from app.domain.pipeline_models import (
@@ -32,6 +35,7 @@ from app.domain.pipeline_models import (
 )
 from app.repositories.gitlab_auth_repository import GitlabAuthRepository
 from app.repositories.gitlab_pipeline_repository import GitlabPipelineRepository
+from app.repositories.trace_cache_repository import TraceCacheRepository
 from app.services.deploy_service import DeployService
 
 _logger = logging.getLogger(__name__)
@@ -42,8 +46,15 @@ router = APIRouter(
 )
 
 
-def _get_deploy_service(project_id: int | None = None) -> DeployService:
-    """Build DeployService with resolved project/token mapping."""
+def _get_deploy_service(
+    project_id: int | None = None,
+    trace_cache: TraceCacheRepository | None = None,
+) -> DeployService:
+    """Build DeployService with resolved project/token mapping.
+
+    ``trace_cache`` is only used by the job-trace endpoint; other endpoints
+    can omit it without losing functionality.
+    """
     settings = get_settings()
     target_project_id = project_id or settings.GITLAB_PROJECT_ID
     target_token = settings.GITLAB_TOKEN
@@ -63,6 +74,7 @@ def _get_deploy_service(project_id: int | None = None) -> DeployService:
         url=settings.GITLAB_URL,
         token=target_token,
         project_id=target_project_id,
+        trace_cache=trace_cache,
     )
     return DeployService(repo)
 
@@ -187,23 +199,6 @@ async def retry_pipeline(
     return ApiResponse(data=data, request_id=_request_id(request))
 
 
-# ── GET /api/v1/deploy/jobs/{job_id}/trace ───────────────────────────────────
-
-@router.get(
-    "/jobs/{job_id}/trace",
-    summary="Get job console logs",
-    description="Returns the raw console output for a specific job ID.",
-)
-async def get_job_trace(
-    job_id: int,
-    project_id: int | None = Query(None, description="GitLab project ID"),
-) -> str:
-    """Returns raw text trace directly."""
-    svc = _get_deploy_service(project_id)
-    status, trace = await svc.get_job_trace(job_id)
-    return trace
-
-
 @router.get(
     "/jobs/{job_id}/trace/ui",
     response_model=ApiResponse[FormattedLogResponse],
@@ -213,11 +208,13 @@ async def get_job_trace(
 async def get_formatted_job_trace(
     request: Request,
     job_id: int,
-    offset: int = 0,
+    byte_offset: int = Query(0, ge=0, description="Byte offset of the last seen log byte; only newer bytes are returned"),
+    line_num: int = Query(1, ge=1, description="Line number to assign to the first returned line"),
     project_id: int | None = Query(None, description="GitLab project ID"),
+    trace_cache: TraceCacheRepository = Depends(get_trace_cache_repository),
 ) -> ApiResponse[FormattedLogResponse]:
-    svc = _get_deploy_service(project_id)
-    data = await svc.get_formatted_job_trace(job_id, offset)
+    svc = _get_deploy_service(project_id, trace_cache=trace_cache)
+    data = await svc.get_formatted_job_trace(job_id, byte_offset, line_num)
     return ApiResponse(data=data, request_id=_request_id(request))
 
 
@@ -234,7 +231,24 @@ async def view_job(
     """Returns a styled HTML log viewer."""
     settings = get_settings()
     target_project_id = project_id or settings.GITLAB_PROJECT_ID
+
+    # Resolve the authoritative job URL from GitLab so the viewer doesn't
+    # have to guess the namespace path. Fall back to the GitLab root if
+    # the lookup fails — a stale link beats blocking the page from rendering.
+    svc = _get_deploy_service(project_id)
+    gitlab_root = settings.GITLAB_URL.rstrip("/")
+    try:
+        job_web_url = await svc.get_job_web_url(job_id)
+    except Exception as exc:
+        _logger.warning(
+            "Could not resolve job web_url for viewer | job=%s | %s",
+            job_id, exc,
+        )
+        job_web_url = gitlab_root
+
     return LOG_VIEWER_HTML.format(
         job_id=job_id,
         project_id=target_project_id,
+        gitlab_url=gitlab_root,
+        job_web_url=job_web_url,
     )

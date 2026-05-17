@@ -56,6 +56,16 @@ class JobData(BaseModel):
     status: str
 
 
+class DownstreamPipelineRef(BaseModel):
+    """A downstream pipeline triggered by a bridge job in the parent pipeline."""
+
+    id: int
+    status: str
+    project_id: int
+    web_url: str = ""
+    bridge_name: str = ""
+
+
 class PipelineData(BaseModel):
     """Pipeline summary returned by all deploy endpoints."""
 
@@ -76,6 +86,10 @@ class PipelineData(BaseModel):
     jobs: list[JobData] = Field(
         default_factory=list,
         description="All jobs associated with this pipeline.",
+    )
+    downstream_pipelines: list[DownstreamPipelineRef] = Field(
+        default_factory=list,
+        description="Downstream pipelines triggered by bridge jobs in this pipeline.",
     )
     ref_name: str = ""
     web_url: str = ""
@@ -110,9 +124,25 @@ class FormattedLogLine(BaseModel):
 
 
 class FormattedLogResponse(BaseModel):
-    """The full collection of processed log lines for UI rendering."""
+    """Incremental slice of processed log lines for UI rendering.
+
+    The UI polls with ``byte_offset`` and ``next_line_num``, and appends
+    only the returned ``lines``. ``next_byte_offset`` and ``next_line_num``
+    are echoed back on the following request so the server never has to
+    re-fetch or re-render bytes the client already has.
+
+    ``size_warning`` flips on when the trace crosses the soft cap; the
+    viewer shows a banner but keeps polling. ``too_large`` flips on at
+    the hard cap; the viewer must stop polling and direct the user to
+    GitLab. ``total_size`` is the current trace size in bytes (used by
+    the viewer to display the size in the warning / error UI).
+    """
 
     job_id: int
     status: str
-    next_offset: int
+    next_byte_offset: int
+    next_line_num: int
     lines: list[FormattedLogLine]
+    total_size: int = 0
+    size_warning: bool = False
+    too_large: bool = False

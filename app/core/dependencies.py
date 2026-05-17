@@ -64,6 +64,10 @@ def get_current_user(required_scopes: list[str] | None = None) -> Callable:
 
 from app.core.redis_client import RedisClient
 from app.repositories.command_state_repository import CommandStateRepository
+from app.repositories.trace_cache_repository import (
+    RedisTraceCache,
+    TraceCacheRepository,
+)
 from app.services.command_service import CommandService
 
 async def get_command_state_repository() -> CommandStateRepository:
@@ -72,3 +76,10 @@ async def get_command_state_repository() -> CommandStateRepository:
 
 async def get_command_service(repo: CommandStateRepository = Depends(get_command_state_repository)) -> CommandService:
     return CommandService(repo)
+
+
+async def get_trace_cache_repository() -> TraceCacheRepository:
+    # Use the binary client: cache stores gzip-compressed bytes which the
+    # default decode_responses=True client would fail to read.
+    redis = await RedisClient.get_binary_client()
+    return RedisTraceCache(redis)

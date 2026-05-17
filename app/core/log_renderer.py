@@ -23,8 +23,18 @@ class LogRenderer:
         # inline=True uses style tags within spans, which is safer for direct injection
         self._conv = Ansi2HTMLConverter(inline=True, linkify=True)
 
-    def render(self, job_id: int, raw_text: str) -> List[FormattedLogLine]:
-        """Convert raw text to a list of FormattedLogLine objects."""
+    def render(
+        self,
+        job_id: int,
+        raw_text: str,
+        start_line_num: int = 1,
+    ) -> List[FormattedLogLine]:
+        """Convert raw text to a list of FormattedLogLine objects.
+
+        ``start_line_num`` is the line number the first non-empty rendered
+        line should be assigned. Use this when rendering a tail slice of a
+        larger log so numbering stays continuous across polls.
+        """
         # Split by newline only, preserving \r within lines for terminal simulation
         if raw_text.endswith('\n'):
             raw_text = raw_text[:-1]
@@ -75,7 +85,7 @@ class LogRenderer:
                 continue
 
             result.append(FormattedLogLine(
-                num=len(result) + 1,
+                num=start_line_num + len(result),
                 content_html=content_html,
             ))
 

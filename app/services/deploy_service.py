@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 
+from app.core.config import get_settings
 from app.core.exceptions import ConflictException
 from app.domain.pipeline_models import (
     PipelineVariable,
@@ -125,22 +126,98 @@ class DeployService:
         _logger.info("Retrying pipeline | id=%s", pipeline_id)
         return await self._repo.retry(pipeline_id)
 
-    async def get_job_trace(self, job_id: int) -> tuple[str, str]:
-        """Return the status and raw console output for a job."""
-        return await self._repo.get_job_trace(job_id)
+    async def get_job_web_url(self, job_id: int) -> str:
+        """Return the GitLab UI URL for *job_id*."""
+        return await self._repo.get_job_web_url(job_id)
 
-    async def get_formatted_job_trace(self, job_id: int, offset: int = 0) -> FormattedLogResponse:
-        """Return processed HTML logs for the UI."""
-        status, raw_text = await self._repo.get_job_trace(job_id)
+    async def get_formatted_job_trace(
+        self,
+        job_id: int,
+        byte_offset: int = 0,
+        line_num: int = 1,
+    ) -> FormattedLogResponse:
+        """Return only the log lines newer than *byte_offset*.
+
+        The server fetches just the byte range starting at *byte_offset* via
+        the repository's HTTP Range request, so each poll transfers only the
+        new tail of the log rather than the entire trace. A trailing
+        partial line (no terminating newline) is held back and re-fetched
+        on the next poll so lines never render half-written.
+
+        Two size caps protect the service and the viewer from runaway logs:
+        ``GITLAB_TRACE_SOFT_CAP_BYTES`` flips ``size_warning`` so the UI
+        shows a "view in GitLab" banner; ``GITLAB_TRACE_HARD_CAP_BYTES``
+        flips ``too_large`` so the UI stops polling entirely. Once the
+        hard cap is hit the response carries no new lines — whatever the
+        client already rendered stays visible.
+        """
+        settings = get_settings()
+        status, new_text, total_size = await self._repo.get_job_trace_range(
+            job_id, byte_offset
+        )
+
+        # ── Hard cap: stop serving lines so the viewer can hand off to
+        # GitLab. We still pay the cost of *this* fetch (GitLab gives no
+        # way to size-check without downloading) but the viewer will stop
+        # polling once it sees ``too_large``, so subsequent fetches don't
+        # happen.
+        if total_size > settings.GITLAB_TRACE_HARD_CAP_BYTES:
+            _logger.warning(
+                "Job trace exceeded hard cap | job=%s | size=%d | cap=%d",
+                job_id, total_size, settings.GITLAB_TRACE_HARD_CAP_BYTES,
+            )
+            return FormattedLogResponse(
+                job_id=job_id,
+                status=status,
+                next_byte_offset=byte_offset,
+                next_line_num=line_num,
+                lines=[],
+                total_size=total_size,
+                too_large=True,
+            )
+
+        size_warning = total_size > settings.GITLAB_TRACE_SOFT_CAP_BYTES
+
+        # Snap to the last newline so we never render a half-flushed line.
+        # The trimmed bytes get re-fetched on the next poll.
+        next_byte_offset = total_size
+        if new_text and not new_text.endswith("\n"):
+            last_nl = new_text.rfind("\n")
+            if last_nl == -1:
+                # No complete line in this slice yet — wait for more bytes.
+                return FormattedLogResponse(
+                    job_id=job_id,
+                    status=status,
+                    next_byte_offset=byte_offset,
+                    next_line_num=line_num,
+                    lines=[],
+                    total_size=total_size,
+                    size_warning=size_warning,
+                )
+            held_back = len(new_text) - (last_nl + 1)
+            new_text = new_text[: last_nl + 1]
+            next_byte_offset = total_size - held_back
+
+        if not new_text:
+            return FormattedLogResponse(
+                job_id=job_id,
+                status=status,
+                next_byte_offset=next_byte_offset,
+                next_line_num=line_num,
+                lines=[],
+                total_size=total_size,
+                size_warning=size_warning,
+            )
+
         renderer = LogRenderer()
-        lines = renderer.render(job_id, raw_text)
-        
-        next_offset = len(lines)
-        returned_lines = lines[offset:] if offset < len(lines) else []
-        
+        lines = renderer.render(job_id, new_text, start_line_num=line_num)
+
         return FormattedLogResponse(
             job_id=job_id,
             status=status,
-            next_offset=next_offset,
-            lines=returned_lines
+            next_byte_offset=next_byte_offset,
+            next_line_num=line_num + len(lines),
+            lines=lines,
+            total_size=total_size,
+            size_warning=size_warning,
         )
