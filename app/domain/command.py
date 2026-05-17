@@ -155,5 +155,6 @@ class ExecutionContext:
     raw_request: CommandExecutionRequest
     cmd_config: CommandWhitelistConfig
     ssh_config: SSHConnectionConfig
+    resolved_host: "ResolvedHost"  # forward-ref to avoid circular import
     conn: Optional[asyncssh.SSHClientConnection] = None
     pipeline_cmds: List[List[str]] = field(default_factory=list)
