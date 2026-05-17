@@ -19,7 +19,11 @@ from app.core.config import get_settings
 from app.core.redis_client import RedisClient
 from app.repositories.ssh_auth_repository import create_authenticator
 from app.repositories.command_state_repository import CommandStateRepository
-from app.core.exceptions import CommandExecutionException
+from app.core.exceptions import (
+    CommandExecutionException,
+    UpstreamTimeoutException,
+    UpstreamUnavailableException,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -203,7 +207,9 @@ class CommandService:
         Connection attempt is bounded by ``SSH_CONNECT_TIMEOUT_SECONDS``.
 
         Raises:
-            CommandExecutionException: If the connection cannot be established or times out.
+            UpstreamTimeoutException:    Connect exceeded the configured timeout (504).
+            UpstreamUnavailableException: Host unreachable, DNS failure, auth rejected,
+                                          or other connect-time failure (502).
         """
         authenticator = create_authenticator(context.ssh_config)
         conn_kwargs = authenticator.get_connect_kwargs()
@@ -219,12 +225,21 @@ class CommandService:
                 timeout=settings.SSH_CONNECT_TIMEOUT_SECONDS,
             )
             return conn
-        except asyncio.TimeoutError:
-            raise CommandExecutionException(
-                f"SSH connection to {target} timed out after {settings.SSH_CONNECT_TIMEOUT_SECONDS}s."
-            )
-        except Exception as e:
-            raise CommandExecutionException(f"SSH Connection Failed ({target}): {str(e)}")
+        except asyncio.TimeoutError as exc:
+            raise UpstreamTimeoutException(
+                f"SSH connection to {target} timed out after "
+                f"{settings.SSH_CONNECT_TIMEOUT_SECONDS}s.",
+                detail={"host": req.host, "port": req.port},
+            ) from exc
+        except (OSError, asyncssh.Error) as exc:
+            # OSError covers DNS failure / ECONNREFUSED / network-unreachable.
+            # asyncssh.Error covers protocol-level failures (auth, host-key
+            # mismatch, disconnect during handshake). Neither is a client
+            # input problem — the upstream is the failing party.
+            raise UpstreamUnavailableException(
+                f"SSH connection to {target} failed: {exc}",
+                detail={"host": req.host, "port": req.port},
+            ) from exc
 
     async def _handle_fire_and_forget(self, context: ExecutionContext) -> CommandExecutionResponse:
         """Execute a command that is expected to sever the SSH connection (e.g. reboot).
@@ -521,7 +536,12 @@ class CommandService:
           3. ``_connect``           — establish SSH session.
           4. Route to ``_handle_fire_and_forget`` or ``_handle_async_execution``.
 
-        Never raises; all failures are returned as ``CommandExecutionResponse.failed()``.
+        Validation / whitelist failures are returned as
+        ``CommandExecutionResponse.failed()`` (HTTP 200 with a failed body).
+        Upstream-host failures (timeout / unreachable / auth rejected) are
+        raised as ``UpstreamTimeoutException`` (504) or
+        ``UpstreamUnavailableException`` (502) so the client gets the
+        structured JSON error shape from the global handler.
         """
         rejected = self._check_capacity(username, request_id)
         if rejected:

@@ -54,5 +54,27 @@ class PipelineRepository(ABC):
         """
 
     @abstractmethod
-    async def get_job_trace(self, job_id: int) -> tuple[str, str]:
-        """Fetch the current status and the raw log trace for a specific job."""
+    async def get_job_web_url(self, job_id: int) -> str:
+        """Return the GitLab UI URL for *job_id*.
+
+        Uses the authoritative ``web_url`` field GitLab attaches to every
+        job object, so the path-with-namespace (``group/project/-/jobs/id``)
+        is always correct regardless of how the project is renamed or
+        moved.
+        """
+
+    @abstractmethod
+    async def get_job_trace_range(
+        self, job_id: int, byte_offset: int
+    ) -> tuple[str, str, int]:
+        """Return the trace tail starting at *byte_offset*.
+
+        Returns ``(status, new_text, total_size)``. ``total_size`` is the
+        byte length of the full trace as of this read — callers use it as
+        the next ``byte_offset`` for the following poll.
+
+        Note: GitLab's trace endpoint does not honor HTTP Range headers,
+        so implementations always read the whole body from upstream and
+        slice locally. Implementations may cache immutable finished-job
+        traces (terminal status) to avoid re-fetching on every poll.
+        """

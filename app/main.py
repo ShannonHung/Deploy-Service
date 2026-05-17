@@ -22,6 +22,8 @@ from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 
+from prometheus_fastapi_instrumentator import Instrumentator
+
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.exceptions import (
@@ -160,6 +162,8 @@ def create_app() -> FastAPI:
         )
 
     app.include_router(api_router)
+
+    Instrumentator().instrument(app).expose(app)
 
     return app
 

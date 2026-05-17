@@ -49,11 +49,11 @@ class RequestIdFilter(logging.Filter):
 
 
 class HealthCheckFilter(logging.Filter):
-    """Filter out /health access logs to reduce noise."""
+    """Filter out /health and /metrics access logs to reduce noise."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        # uvicorn.access logs store the formatted message or args
-        return "/health" not in record.getMessage()
+        msg = record.getMessage()
+        return "/health" not in msg and "/metrics" not in msg
 
 
 _request_id_filter = RequestIdFilter()

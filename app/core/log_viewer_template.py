@@ -160,6 +160,85 @@ LOG_VIEWER_HTML = """
 
         /* Ansi2HTML dynamically overrides using inline styles, but we can target specific classes if we use full=False without inline=True. Since we use inline=True, we use JS to replace the hard-to-read blue. */
         .ansi-override-blue {{ color: var(--ansi-blue) !important; }}
+
+        /* Fatal-error panel shown after MAX_FAILURES consecutive poll failures. */
+        .error-panel {{
+            max-width: 680px;
+            margin: 60px auto;
+            padding: 24px 28px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            background: var(--header-bg);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            line-height: 1.6;
+        }}
+        .error-panel h2 {{
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: #cf222e;
+        }}
+        .error-panel p {{ margin: 8px 0; font-size: 14px; }}
+        .error-panel .error-meta {{
+            margin: 16px 0;
+            padding: 12px 16px;
+            background: var(--bg-color);
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+        }}
+        .error-panel .error-meta > div {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 4px 0;
+        }}
+        .error-panel .error-meta .label {{
+            min-width: 90px;
+            font-size: 12px;
+            text-transform: uppercase;
+            color: var(--line-number-color);
+            font-weight: 600;
+        }}
+        .error-panel code {{
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 13px;
+            color: var(--text-color);
+        }}
+        .error-link {{
+            color: var(--accent-color);
+            word-break: break-all;
+        }}
+        .error-link:hover {{ text-decoration: underline; }}
+
+        /* Soft-cap warning banner shown above the log when trace size
+           crosses GITLAB_TRACE_SOFT_CAP_BYTES. Polling continues.
+           Sits between <header> and #log-container as a flex sibling so
+           it stays pinned at the top of the viewport and does not scroll
+           with the log body. */
+        .size-warning-banner {{
+            flex-shrink: 0;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border-color);
+            border-left: 4px solid #d29922;
+            background: var(--header-bg);
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            z-index: 99;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }}
+        .size-warning-banner .banner-text {{ flex: 1; }}
+        .size-warning-banner strong {{ color: var(--text-color); }}
+        .size-warning-banner a {{
+            color: var(--accent-color);
+            font-weight: 600;
+            white-space: nowrap;
+            text-decoration: none;
+        }}
+        .size-warning-banner a:hover {{ text-decoration: underline; }}
     </style>
 </head>
 <body>
@@ -174,6 +253,7 @@ LOG_VIEWER_HTML = """
             </button>
             <div class="status">
                 <span id="job-status" class="job-status-badge">...</span>
+                <span id="trace-size" class="job-status-badge" title="Current log size">— B</span>
                 <span class="dot" id="polling-dot"></span>
                 <span id="sync-status">Connecting...</span>
                 <span id="interval-status" style="color: var(--text-color); background: var(--hover-bg); padding: 2px 6px; border-radius: 6px; font-weight: 600; font-size: 11px; margin-left: 5px; border: 1px solid var(--border-color);">(5s)</span>
@@ -191,17 +271,35 @@ LOG_VIEWER_HTML = """
         const syncStatus = document.getElementById('sync-status');
         const intervalStatus = document.getElementById('interval-status');
         const jobStatusBadge = document.getElementById('job-status');
+        const traceSizeBadge = document.getElementById('trace-size');
         const themeBtn = document.getElementById('theme-btn');
         const themeIcon = document.getElementById('theme-icon');
         const pollingDot = document.getElementById('polling-dot');
         
-        let currentOffset = 0;
+        let currentByteOffset = 0;
+        let currentLineNum = 1;
         let timer = null;
         let isDarkMode = true;
         let currentInterval = 5000;
+        let consecutiveFailures = 0;
+        let sizeWarningShown = false;
         const MAX_INTERVAL = 30000;
-        
+        const MAX_FAILURES = 5;
+
         const TERMINAL_STATUSES = ['success', 'failed', 'canceled', 'skipped', 'manual'];
+
+        const gitlabUrl = '{gitlab_url}';
+        const projectId = '{project_id}';
+        const jobId = '{job_id}';
+        // Resolved server-side via GitLab's job.web_url — authoritative
+        // and immune to project rename / namespace changes.
+        const jobLink = '{job_web_url}';
+
+        function formatBytes(n) {{
+            if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+            if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+            return n + ' B';
+        }}
 
         // Apply theme on load
         if (localStorage.getItem('theme') === 'light') {{
@@ -232,15 +330,104 @@ LOG_VIEWER_HTML = """
             }}
         }}
 
+        function showSizeWarning(totalSize) {{
+            // One-shot — render the banner above the log the first time the
+            // soft cap is crossed, then leave it in place. Polling continues.
+            if (sizeWarningShown) return;
+            sizeWarningShown = true;
+            const banner = document.createElement('div');
+            banner.className = 'size-warning-banner';
+            banner.innerHTML = `
+                <div class="banner-text">
+                    <strong>Log is large (${{formatBytes(totalSize)}}).</strong>
+                    Rendering many lines may slow your browser — for better performance, view in GitLab.
+                </div>
+                <a href="${{jobLink}}" target="_blank" rel="noopener">Open in GitLab →</a>
+            `;
+            // Insert as a flex sibling between <header> and #log-container
+            // so the banner stays pinned at the top of the viewport.
+            container.parentNode.insertBefore(banner, container);
+        }}
+
+        function showFatalError(opts) {{
+            // ``opts`` = {{ reason: 'poll_failed' | 'too_large',
+            //              err?: Error, totalSize?: number }}
+            // Stop polling permanently.
+            if (timer) clearTimeout(timer);
+            timer = null;
+
+            // Update status indicators.
+            pollingDot.style.animation = 'none';
+            pollingDot.style.background = '#cf222e';
+            pollingDot.style.opacity = '1';
+            syncStatus.innerText = 'Stopped';
+            intervalStatus.style.display = 'none';
+
+            let heading;
+            let body;
+            let metaRows;
+            if (opts.reason === 'too_large') {{
+                jobStatusBadge.innerText = 'TOO LARGE';
+                heading = 'Log too large to display';
+                body = `This job's log has reached ${{formatBytes(opts.totalSize)}}, which exceeds the viewer's hard cap. Rendering it in the browser would make the page unresponsive, so the viewer is handing off to GitLab.`;
+                metaRows = `
+                    <div><span class="label">Project ID</span><code>${{projectId}}</code></div>
+                    <div><span class="label">Job ID</span><code>${{jobId}}</code></div>
+                    <div><span class="label">Trace size</span><code>${{formatBytes(opts.totalSize)}}</code></div>
+                `;
+            }} else {{
+                jobStatusBadge.innerText = 'UNAVAILABLE';
+                const detail = opts.err && opts.err.message ? opts.err.message : 'Unknown error';
+                heading = 'Cannot load job logs';
+                body = `Failed to fetch logs after ${{MAX_FAILURES}} consecutive attempts. Polling has stopped to avoid further load.`;
+                metaRows = `
+                    <div><span class="label">Project ID</span><code>${{projectId}}</code></div>
+                    <div><span class="label">Job ID</span><code>${{jobId}}</code></div>
+                    <div><span class="label">Last error</span><code>${{detail}}</code></div>
+                `;
+            }}
+
+            // Append the panel below whatever's already rendered (so the
+            // user keeps any lines they were reading when the cap hit).
+            const panel = document.createElement('div');
+            panel.className = 'error-panel';
+            panel.innerHTML = `
+                <h2>${{heading}}</h2>
+                <p>${{body}}</p>
+                <div class="error-meta">${{metaRows}}</div>
+                <p>Please check the job directly in GitLab:</p>
+                <p><a class="error-link" href="${{jobLink}}" target="_blank" rel="noopener">${{jobLink}}</a></p>
+            `;
+            container.appendChild(panel);
+        }}
+
         async function refresh() {{
             try {{
-                const res = await fetch(`/api/v1/deploy/jobs/{job_id}/trace/ui?offset=${{currentOffset}}&project_id={project_id}&t=${{Date.now()}}`, {{ cache: 'no-store' }});
+                const res = await fetch(`/api/v1/deploy/jobs/{job_id}/trace/ui?byte_offset=${{currentByteOffset}}&line_num=${{currentLineNum}}&project_id={project_id}&t=${{Date.now()}}`, {{ cache: 'no-store' }});
+                if (!res.ok) throw new Error(`HTTP ${{res.status}}`);
                 const json = await res.json();
                 if (!json.data || !json.data.lines) throw new Error("Invalid API response");
 
+                consecutiveFailures = 0;
                 const data = json.data;
                 const status = data.status || 'unknown';
                 jobStatusBadge.innerText = status.toUpperCase();
+                if (typeof data.total_size === 'number') {{
+                    traceSizeBadge.innerText = formatBytes(data.total_size);
+                }}
+
+                // Hard cap: stop polling, switch to error panel, keep
+                // already-rendered lines visible. Bail before touching
+                // status badges so the panel's TOO LARGE label sticks.
+                if (data.too_large) {{
+                    showFatalError({{ reason: 'too_large', totalSize: data.total_size }});
+                    return;
+                }}
+
+                // Soft cap: one-shot banner, keep polling normally.
+                if (data.size_warning) {{
+                    showSizeWarning(data.total_size);
+                }}
 
                 if (TERMINAL_STATUSES.includes(status)) {{
                     if (timer) clearTimeout(timer);
@@ -254,15 +441,19 @@ LOG_VIEWER_HTML = """
                     intervalStatus.style.display = 'inline';
                 }}
 
+                // Always advance the byte cursor (server may bump it even with
+                // zero lines, e.g. when only whitespace was added).
+                currentByteOffset = data.next_byte_offset;
+                currentLineNum = data.next_line_num;
+
                 if (data.lines.length === 0) {{
                     // No new logs, backoff polling up to MAX_INTERVAL
                     currentInterval = Math.min(currentInterval + 5000, MAX_INTERVAL);
                 }} else {{
                     // New logs found, reset to fast polling
                     currentInterval = 5000;
-                    currentOffset = data.next_offset;
                     render(data.lines);
-                    
+
                     // Auto-scroll logic (always on since we removed toggles)
                     container.scrollTop = container.scrollHeight;
                 }}
@@ -271,8 +462,15 @@ LOG_VIEWER_HTML = """
                 intervalStatus.innerText = `(${{currentInterval / 1000}}s)`;
                 
             }} catch (e) {{
-                syncStatus.innerText = "Sync Failed";
-                console.error(e);
+                consecutiveFailures += 1;
+                console.error('Log poll failed', e);
+                if (consecutiveFailures >= MAX_FAILURES) {{
+                    showFatalError({{ reason: 'poll_failed', err: e }});
+                    // showFatalError sets timer=null so the finally block
+                    // won't reschedule.
+                }} else {{
+                    syncStatus.innerText = `Sync Failed (${{consecutiveFailures}}/${{MAX_FAILURES}})`;
+                }}
             }} finally {{
                 // Schedule next poll if job is not finished
                 if (timer !== null) {{

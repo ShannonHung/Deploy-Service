@@ -38,6 +38,19 @@ class Settings(BaseSettings):
     GITLAB_TOKEN: str = ""
     GITLAB_PROJECT_ID: int = 0
     GITLAB_AUTH_JSON_PATH: str = "/data/gitlab_auth.json"
+    # Upper bound on a single GitLab trace fetch. Should be shorter than the
+    # ingress/proxy read timeout so we return our own 504 first.
+    GITLAB_TRACE_TIMEOUT_SECONDS: int = 45
+    # Cache TTL for finished-job traces (immutable). A poll for a cached
+    # finished job hits Redis and skips GitLab entirely.
+    GITLAB_TRACE_CACHE_TTL_SECONDS: int = 86400
+    # Soft cap: trace size at which the viewer shows a "log is large"
+    # banner pointing to GitLab but keeps rendering. UX hint only.
+    GITLAB_TRACE_SOFT_CAP_BYTES: int = 5 * 1024 * 1024
+    # Hard cap: trace size at which the service stops returning lines and
+    # the viewer switches to the fatal-error panel with a GitLab link.
+    # Protects pod memory from runaway logs.
+    GITLAB_TRACE_HARD_CAP_BYTES: int = 10 * 1024 * 1024
 
     # ── SSH Command API ───────────────────────────────────────────────────────
     COMMAND_CONFIG_DIR: str = "data"
@@ -54,7 +67,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         # Load order: .env (base) → .env.{APP_ENV} (env-specific overrides).
         # Missing files are silently ignored, so a plain .env alone is enough.
-        env_file=[".env", f".env.{os.getenv('APP_ENV', 'dev')}"],
+        env_file=[".env", f".env.{os.getenv('APP_ENV', 'dev')}", ".env.local"],
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",

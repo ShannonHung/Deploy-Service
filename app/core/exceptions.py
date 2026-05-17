@@ -121,6 +121,30 @@ class GitlabOperationException(BaseAppException):
     log_level = logging.ERROR
 
 
+class UpstreamTimeoutException(BaseAppException):
+    """Raised when an upstream call (GitLab trace fetch, SSH connect, etc.)
+    exceeds its configured timeout. Surfaced as 504 so clients still receive
+    a structured JSON error instead of a bare proxy timeout.
+    """
+
+    http_status = 504
+    error_code = "UPSTREAM_TIMEOUT"
+    log_level = logging.WARNING
+
+
+class UpstreamUnavailableException(BaseAppException):
+    """Raised when an upstream system (e.g. SSH target host) is reachable
+    on the network layer but cannot complete the request — DNS failure,
+    connection refused, host key mismatch, authentication failure, etc.
+    Surfaced as 502 because the gateway/upstream is the failing party,
+    not the client.
+    """
+
+    http_status = 502
+    error_code = "UPSTREAM_UNAVAILABLE"
+    log_level = logging.WARNING
+
+
 class ConflictException(BaseAppException):
     """Raised when the requested action conflicts with the current state.
 
