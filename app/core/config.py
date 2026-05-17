@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     COMMAND_MAX_RUNNING: int = 50
     SSH_CONNECT_TIMEOUT_SECONDS: int = 30
 
+    # ── Inventory API ─────────────────────────────────────────────────────────
+    INVENTORY_API_URL: str = "http://localhost:9001"
+    INVENTORY_API_TOKEN: str = "fake-inventory-token"
+    INVENTORY_API_TIMEOUT_SECONDS: float = 5.0
+
     # ── Redis ─────────────────────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
     COMMAND_RESULT_TTL_SECONDS: int = 86400
