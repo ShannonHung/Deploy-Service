@@ -108,15 +108,27 @@ class CommandService:
 
     async def get_command_execution_result(self, command_id: str) -> CommandExecutionResponse:
         """Poll the current status / result for a previously submitted command from Redis.
+
+        Raises:
+            NotFoundException: If the command_id does not exist in Redis.
         """
-        state = await self.repo.get(command_id)
+        try:
+            state = await self.repo.get(command_id)
+        except CommandExecutionException as exc:
+            raise NotFoundException(
+                f"Command {command_id} not found.",
+                detail={"command_id": command_id},
+            ) from exc
         return CommandExecutionResponse(
             status=state.status,
             command_id=state.command_id,
             exit_status=state.exit_code,
             output=state.output,
             message=state.message or "",
-            exec_command=state.exec_command
+            exec_command=state.exec_command,
+            host_type=state.host_type,
+            resolved_ip=state.resolved_ip,
+            pgids=state.pgids,
         )
 
     def get_user_commands(self, username: str) -> UserCommandWhitelist:
@@ -668,7 +680,10 @@ class CommandService:
             await self.repo.update(command_id, lambda s: s.mark_killed(message), ttl)
             return
 
-        logger.info(f"Initiating cross-pod kill for {command_id} on {state.host}:{state.port}")
+        logger.info(
+            f"Initiating cross-pod kill for {command_id} on {state.resolved_ip}:{state.port} "
+            f"(host_type={state.host_type.value}, raw={state.host})"
+        )
         
         ssh_config = self._load_ssh_config(state.ssh_config)
         authenticator = create_authenticator(ssh_config)
