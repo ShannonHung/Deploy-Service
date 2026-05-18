@@ -39,10 +39,10 @@ def test_execute_invalid_argument_regex(client: TestClient):
             "arguments": {"time": "notanint"}
         }
     )
-    assert resp.status_code == 200
-    data = resp.json()["data"]
-    assert data["status"] == "failed"
-    assert "does not match validation regex" in data["message"]
+    assert resp.status_code == 400, resp.text
+    body = resp.json()
+    assert body["error"]["code"] == "COMMAND_EXECUTION_ERROR"
+    assert "does not match validation regex" in body["error"]["message"]
 
 def test_execute_reboot_fire_and_forget(client: TestClient):
     token = _get_token(client, "test_admin")
