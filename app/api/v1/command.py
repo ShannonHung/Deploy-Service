@@ -3,12 +3,13 @@ from fastapi import APIRouter, Depends, Request
 
 from app.domain.command import (
     CommandExecutionRequest, CommandExecutionResponse,
+    CommandStatus,
     UserCommandWhitelist, CommandWhitelistConfig,
 )
 from app.services.command_service import CommandService
 from app.core.dependencies import get_current_user, get_command_service
 from app.core.exceptions import (
-    ConflictException, NotFoundException,
+    CommandExecutionException, ConflictException, NotFoundException,
 )
 from app.domain.models import User, ApiResponse
 
@@ -95,12 +96,12 @@ async def kill_command_endpoint(
     req_id = _request_id(request)
     try:
         state = await svc.repo.get(command_id)
-    except Exception as exc:
+    except CommandExecutionException as exc:
         raise NotFoundException(
             f"Command {command_id} not found.", detail={"command_id": command_id}
         ) from exc
 
-    if state.status != "running":
+    if state.status != CommandStatus.RUNNING:
         raise ConflictException(
             f"Cannot kill command in {state.status} state.",
             detail={"command_id": command_id, "current_status": state.status},

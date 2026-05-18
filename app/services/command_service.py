@@ -27,7 +27,6 @@ from app.core.exceptions import (
     UpstreamUnavailableException,
     ForbiddenException,
     NotFoundException,
-    ConflictException,
     ServiceUnavailableException,
     BaseAppException,
 )
