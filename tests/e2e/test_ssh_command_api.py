@@ -1,5 +1,19 @@
+import os
+
 import pytest
 from fastapi.testclient import TestClient
+
+# These tests hit a real Redis instance and the docker-compose ssh_node_*
+# containers. They are slow, require local infrastructure, and are skipped
+# unless RUN_E2E=1 is set. CI should additionally filter with -m "not e2e".
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.skipif(
+        not os.getenv("RUN_E2E"),
+        reason="requires real Redis + docker SSH nodes; set RUN_E2E=1 to run",
+    ),
+]
+
 
 def _get_token(client: TestClient, account: str = "test_admin") -> str:
     resp = client.post("/token", data={"username": account, "password": "secret"})

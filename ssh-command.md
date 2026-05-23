@@ -29,6 +29,7 @@
 10. [結構化日誌](#10-結構化日誌)
 - [Errors (2026-05-18+)](#errors-2026-05-18)
 - [Local Inventory mock](#local-inventory-mock)
+- [測試分層](#測試分層)
 11. [附錄：核心檔案索引](#11-附錄核心檔案索引)
 
 ---
@@ -608,6 +609,34 @@ make inventory-api       # 啟動於 http://localhost:9001
 ```
 
 實作在 `fake-api/main.py`（單檔 FastAPI），資料來源是 `fake-api/data/inventory.json`（靜態 JSON）。`.env.dev` 已預設指向 `http://localhost:9001`。若要新增測試用主機，編輯 `inventory.json` 即可，不必動服務碼。fake server **不**模擬 latency 或 retry，僅夠驗證解析與錯誤路由。
+
+---
+
+## 測試分層
+
+| 目錄                 | 性質                                     | 外部依賴                            | CI 是否跑 |
+|----------------------|------------------------------------------|-------------------------------------|----------|
+| `tests/unit/`        | 純邏輯                                    | 無                                  | ✅        |
+| `tests/integration/` | FastAPI `TestClient` + `dependency_overrides` 注入記憶體 stub | 無                | ✅        |
+| `tests/e2e/`         | 端到端：真實 Redis + docker SSH nodes      | `make redis-up` + `make setup-ssh-nodes` | ❌（預設 skip） |
+
+`tests/e2e/` 的檔案在頂端有：
+
+```python
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.skipif(not os.getenv("RUN_E2E"), reason="..."),
+]
+```
+
+兩道保險：CI 用 `-m "not e2e"` 過濾、沒帶 `RUN_E2E=1` 也會自動 skip。常用指令：
+
+| 指令              | 跑什麼                              | 適用情境                |
+|-------------------|-------------------------------------|-------------------------|
+| `make test`       | unit + integration                  | 日常開發、CI            |
+| `make test-all`   | 全部含 e2e                          | 本地上下游整合驗證       |
+| `make test-e2e`   | 只跑 e2e                            | 確認 Redis / SSH 整合    |
+| `make test-ci`    | 等同 `make test`                    | CI 設定明確語意          |
 
 ---
 
