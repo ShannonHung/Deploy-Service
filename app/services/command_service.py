@@ -47,7 +47,11 @@ def _get_semaphore() -> asyncio.Semaphore:
 
 
 class CommandService:
-    def __init__(self, repo: CommandStateRepository, inventory: InventoryRepository):
+    def __init__(
+        self,
+        repo: CommandStateRepository,
+        inventory: Optional[InventoryRepository],
+    ):
         self.repo = repo
         self.inventory = inventory
 
