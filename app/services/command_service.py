@@ -13,16 +13,22 @@ from app.domain.command import (
     CommandExecutionRequest, CommandExecutionResponse,
     UserCommandWhitelist, CommandWhitelistConfig,
     SSHConnectionConfig, RunningCommandEntry, ExecutionContext,
-    CommandState, CommandStatus,
+    CommandState, CommandStatus, HostType,
 )
 from app.core.config import get_settings
 from app.core.redis_client import RedisClient
 from app.repositories.ssh_auth_repository import create_authenticator
 from app.repositories.command_state_repository import CommandStateRepository
+from app.repositories.inventory_repository import InventoryRepository
+from app.repositories.host_resolver import ResolvedHost, create_host_resolver
 from app.core.exceptions import (
     CommandExecutionException,
     UpstreamTimeoutException,
     UpstreamUnavailableException,
+    ForbiddenException,
+    NotFoundException,
+    ServiceUnavailableException,
+    BaseAppException,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,8 +47,13 @@ def _get_semaphore() -> asyncio.Semaphore:
 
 
 class CommandService:
-    def __init__(self, repo: CommandStateRepository):
+    def __init__(
+        self,
+        repo: CommandStateRepository,
+        inventory: Optional[InventoryRepository],
+    ):
         self.repo = repo
+        self.inventory = inventory
 
     def _validate_anti_injection(self, user_input: str):
         """Early-rejection layer: block inputs containing shell meta-characters.
@@ -65,11 +76,14 @@ class CommandService:
         into a ``UserCommandWhitelist`` model.
 
         Raises:
-            CommandExecutionException: If the configuration file does not exist.
+            ForbiddenException: If the configuration file does not exist.
         """
         file_path = os.path.join(settings.COMMAND_CONFIG_DIR, f"allow-commands-{username}.json")
         if not os.path.exists(file_path):
-            raise CommandExecutionException("User whitelist configuration not found. No permission.")
+            raise ForbiddenException(
+                f"User '{username}' has no command whitelist configured.",
+                detail={"username": username},
+            )
         with open(file_path, "r") as f:
             data = json.load(f)
         return UserCommandWhitelist(**data)
@@ -81,28 +95,43 @@ class CommandService:
         ``data/SSH-default.json`` if the target-specific file is absent.
 
         Raises:
-            CommandExecutionException: If neither file exists.
+            BaseAppException: If neither file exists (500 — operator misconfig).
         """
         file_path = os.path.join(settings.COMMAND_CONFIG_DIR, f"SSH-{target}.json")
         if not os.path.exists(file_path):
             file_path = os.path.join(settings.COMMAND_CONFIG_DIR, "SSH-default.json")
             if not os.path.exists(file_path):
-                 raise CommandExecutionException("SSH configuration not found.")
+                raise BaseAppException(
+                    "SSH configuration not found.",
+                    detail={"target": target},
+                )
         with open(file_path, "r") as f:
             data = json.load(f)
         return SSHConnectionConfig(**data)
 
     async def get_command_execution_result(self, command_id: str) -> CommandExecutionResponse:
         """Poll the current status / result for a previously submitted command from Redis.
+
+        Raises:
+            NotFoundException: If the command_id does not exist in Redis.
         """
-        state = await self.repo.get(command_id)
+        try:
+            state = await self.repo.get(command_id)
+        except CommandExecutionException as exc:
+            raise NotFoundException(
+                f"Command {command_id} not found.",
+                detail={"command_id": command_id},
+            ) from exc
         return CommandExecutionResponse(
             status=state.status,
             command_id=state.command_id,
             exit_status=state.exit_code,
             output=state.output,
             message=state.message or "",
-            exec_command=state.exec_command
+            exec_command=state.exec_command,
+            host_type=state.host_type,
+            resolved_ip=state.resolved_ip,
+            pgids=state.pgids,
         )
 
     def get_user_commands(self, username: str) -> UserCommandWhitelist:
@@ -121,57 +150,94 @@ class CommandService:
             raise CommandExecutionException(f"Command '{command_name}' not found.")
         return cmd_config
 
-    def _prepare_execution(self, username: str, request_id: str, req: CommandExecutionRequest) -> ExecutionContext:
+    async def _prepare_execution(
+        self, username: str, request_id: str, req: CommandExecutionRequest,
+    ) -> ExecutionContext:
         """Validate the incoming request and assemble an ExecutionContext.
 
-        Performs whitelist lookup, argument validation (anti-injection +
-        regex), and SSH config loading.  All results are bundled into an
+        Performs whitelist lookup, host resolution, allow/deny matching
+        on the resolved IP, argument validation (anti-injection + regex),
+        and SSH config loading. All results are bundled into an
         ``ExecutionContext`` dataclass for downstream consumption.
 
         Raises:
-            CommandExecutionException: On any validation or config failure.
+            ForbiddenException: Missing whitelist, host blocked/not allowed,
+                command not in whitelist.
+            NotFoundException: Hostname not found in inventory (propagated).
+            UpstreamTimeoutException / UpstreamUnavailableException:
+                Inventory lookup failures (propagated).
+            CommandExecutionException: Argument validation failures (400).
+            BaseAppException: SSH configuration missing on disk (500).
         """
         whitelist = self._load_user_whitelist(username)
-        
-        # Check host against deny list (blacklist)
-        if any(re.match(pattern, req.host) for pattern in whitelist.deny_hosts):
-            logger.warning(
-                f"Host '{req.host}' is blocked for user '{username}' by deny list.",
-                extra={"request_id": request_id, "username": username, "host": req.host}
-            )
-            raise CommandExecutionException(f"Host '{req.host}' is blocked.")
 
-        # Check host against allow list (whitelist)
-        if not any(re.match(pattern, req.host) for pattern in whitelist.allow_hosts):
+        resolver = create_host_resolver(req.host_type, self.inventory)
+        resolved = await resolver.resolve(req.host)
+
+        if any(re.match(pattern, resolved.ip) for pattern in whitelist.deny_hosts):
             logger.warning(
-                f"Host '{req.host}' is not allowed for user '{username}' by allow list.",
-                extra={"request_id": request_id, "username": username, "host": req.host}
+                f"Host '{resolved.ip}' is blocked for user '{username}' by deny list.",
+                extra={
+                    "request_id": request_id, "username": username,
+                    "host": req.host, "host_type": req.host_type.value,
+                    "resolved_ip": resolved.ip,
+                },
             )
-            raise CommandExecutionException(f"Host '{req.host}' is not allowed.")
-        
-        cmd_config = next((c for c in whitelist.allow_commands if c.command_name == req.command_name), None)
+            raise ForbiddenException(
+                f"Host '{resolved.ip}' is blocked.",
+                detail={"host": req.host, "resolved_ip": resolved.ip},
+            )
+
+        if not any(re.match(pattern, resolved.ip) for pattern in whitelist.allow_hosts):
+            logger.warning(
+                f"Host '{resolved.ip}' is not allowed for user '{username}' by allow list.",
+                extra={
+                    "request_id": request_id, "username": username,
+                    "host": req.host, "host_type": req.host_type.value,
+                    "resolved_ip": resolved.ip,
+                },
+            )
+            raise ForbiddenException(
+                f"Host '{resolved.ip}' is not allowed.",
+                detail={"host": req.host, "resolved_ip": resolved.ip},
+            )
+
+        cmd_config = next(
+            (c for c in whitelist.allow_commands if c.command_name == req.command_name),
+            None,
+        )
         if not cmd_config:
-            raise CommandExecutionException(f"Command '{req.command_name}' not found in whitelist.")
+            raise ForbiddenException(
+                f"Command '{req.command_name}' not in user '{username}' whitelist.",
+                detail={"command_name": req.command_name, "username": username},
+            )
 
         for arg_conf in cmd_config.arguments:
             val = req.arguments.get(arg_conf.name)
             if val is None:
-                raise CommandExecutionException(f"Missing required argument: {arg_conf.name}")
+                raise CommandExecutionException(
+                    f"Missing required argument: {arg_conf.name}",
+                    detail={"argument": arg_conf.name},
+                )
             val_str = str(val)
             self._validate_anti_injection(val_str)
             if arg_conf.validation_regex:
                 if not re.match(arg_conf.validation_regex, val_str):
-                    raise CommandExecutionException(f"Argument '{arg_conf.name}' does not match validation regex.")
-        
+                    raise CommandExecutionException(
+                        f"Argument '{arg_conf.name}' does not match validation regex.",
+                        detail={"argument": arg_conf.name},
+                    )
+
         ssh_config = self._load_ssh_config(req.ssh_config)
-        
+
         return ExecutionContext(
             username=username,
             request_id=request_id,
             command_name=req.command_name,
             raw_request=req,
             cmd_config=cmd_config,
-            ssh_config=ssh_config
+            ssh_config=ssh_config,
+            resolved_host=resolved,
         )
 
     def _resolve_command_part(self, part: str, arguments: Dict[str, Any], arg_defs: list) -> str:
@@ -213,23 +279,27 @@ class CommandService:
         """
         authenticator = create_authenticator(context.ssh_config)
         conn_kwargs = authenticator.get_connect_kwargs()
-        target = f"{req.host}:{req.port}"
+        ip = context.resolved_host.ip
+        target = f"{ip}:{req.port}"
         try:
             conn = await asyncio.wait_for(
                 asyncssh.connect(
-                    host=req.host,
+                    host=ip,
                     port=req.port,
                     username=req.username,
-                    **conn_kwargs
+                    **conn_kwargs,
                 ),
                 timeout=settings.SSH_CONNECT_TIMEOUT_SECONDS,
             )
             return conn
         except asyncio.TimeoutError as exc:
             raise UpstreamTimeoutException(
-                f"SSH connection to {target} timed out after "
-                f"{settings.SSH_CONNECT_TIMEOUT_SECONDS}s.",
-                detail={"host": req.host, "port": req.port},
+                f"SSH connection to {target} (host_type={req.host_type.value}, raw={req.host}) "
+                f"timed out after {settings.SSH_CONNECT_TIMEOUT_SECONDS}s.",
+                detail={
+                    "host": req.host, "host_type": req.host_type.value,
+                    "resolved_ip": ip, "port": req.port,
+                },
             ) from exc
         except (OSError, asyncssh.Error) as exc:
             # OSError covers DNS failure / ECONNREFUSED / network-unreachable.
@@ -237,8 +307,11 @@ class CommandService:
             # mismatch, disconnect during handshake). Neither is a client
             # input problem — the upstream is the failing party.
             raise UpstreamUnavailableException(
-                f"SSH connection to {target} failed: {exc}",
-                detail={"host": req.host, "port": req.port},
+                f"SSH connection to {target} (host_type={req.host_type.value}, raw={req.host}) failed: {exc}",
+                detail={
+                    "host": req.host, "host_type": req.host_type.value,
+                    "resolved_ip": ip, "port": req.port,
+                },
             ) from exc
 
     async def _handle_fire_and_forget(self, context: ExecutionContext) -> CommandExecutionResponse:
@@ -430,27 +503,29 @@ class CommandService:
         loop = asyncio.get_running_loop()
         
         entry = RunningCommandEntry(
-            host_ip=context.raw_request.host,
+            host_ip=context.resolved_host.ip,
             killable=context.cmd_config.killable,
-            conn=context.conn
+            conn=context.conn,
         )
         _local_running_commands[command_id] = entry
 
         timeout_seconds = context.raw_request.option.timeout_seconds if context.raw_request.option.timeout_seconds else settings.COMMAND_DEFAULT_TIMEOUT
-        
+
         cmd_str_preview = " | ".join(shlex.join(cmd) for cmd in context.pipeline_cmds)
-        
+
         state = CommandState(
             command_id=command_id,
             status=CommandStatus.RUNNING,
             host=context.raw_request.host,
+            host_type=context.raw_request.host_type,
+            resolved_ip=context.resolved_host.ip,
             port=context.raw_request.port,
             username=context.username,
             ssh_config=context.raw_request.ssh_config,
             request_id=context.request_id,
             killable=context.cmd_config.killable,
             pgids=[],
-            exec_command=cmd_str_preview
+            exec_command=cmd_str_preview,
         )
         await self.repo.save(state, timeout_seconds + 30)
 
@@ -515,50 +590,43 @@ class CommandService:
         entry.task = loop.create_task(_timeout_wrapper())
         return CommandExecutionResponse(status=CommandStatus.RUNNING.value, command_id=command_id)
 
-    def _check_capacity(self, username: str, request_id: str) -> Optional[CommandExecutionResponse]:
-        """Return a failed response if the running pool has reached its limit, otherwise None."""
+    def _check_capacity(self, username: str, request_id: str) -> None:
+        """Raise ServiceUnavailableException if the running pool is full."""
         if len(_local_running_commands) >= settings.COMMAND_MAX_RUNNING:
             logger.warning(
                 f"Max running commands reached ({settings.COMMAND_MAX_RUNNING}), rejecting new request.",
-                extra={"request_id": request_id, "username": username}
+                extra={"request_id": request_id, "username": username},
             )
-            return CommandExecutionResponse.failed(
-                f"Too many running commands (limit: {settings.COMMAND_MAX_RUNNING}). Please try again later."
+            raise ServiceUnavailableException(
+                f"Too many running commands (limit: {settings.COMMAND_MAX_RUNNING}). "
+                "Please try again later.",
+                detail={"max_running": settings.COMMAND_MAX_RUNNING},
             )
-        return None
 
-    async def execute_command(self, username: str, request_id: str, req: CommandExecutionRequest) -> CommandExecutionResponse:
+    async def execute_command(
+        self, username: str, request_id: str, req: CommandExecutionRequest,
+    ) -> CommandExecutionResponse:
         """Top-level orchestrator for SSH command execution.
 
         Coordinates the full lifecycle:
-          1. ``_prepare_execution`` — validate & build context.
-          2. ``_build_pipeline``    — resolve argument placeholders.
-          3. ``_connect``           — establish SSH session.
-          4. Route to ``_handle_fire_and_forget`` or ``_handle_async_execution``.
+          1. ``_check_capacity``    — backpressure gate.
+          2. ``_prepare_execution`` — validate, resolve host, build context.
+          3. ``_build_pipeline``    — resolve argument placeholders.
+          4. ``_connect``           — establish SSH session.
+          5. Route to ``_handle_fire_and_forget`` or ``_handle_async_execution``.
 
-        Validation / whitelist failures are returned as
-        ``CommandExecutionResponse.failed()`` (HTTP 200 with a failed body).
-        Upstream-host failures (timeout / unreachable / auth rejected) are
-        raised as ``UpstreamTimeoutException`` (504) or
-        ``UpstreamUnavailableException`` (502) so the client gets the
-        structured JSON error shape from the global handler.
+        Typed BaseAppException subclasses (Forbidden / NotFound / Upstream /
+        ServiceUnavailable / CommandExecution / BaseAppException) are allowed
+        to propagate so the global handler in main.py renders the structured
+        JSON error response.
         """
-        rejected = self._check_capacity(username, request_id)
-        if rejected:
-            return rejected
+        self._check_capacity(username, request_id)
 
-        try:
-            context = self._prepare_execution(username, request_id, req)
-        except CommandExecutionException as e:
-            return CommandExecutionResponse.failed(str(e))
-
+        context = await self._prepare_execution(username, request_id, req)
         context.pipeline_cmds = self._build_pipeline(context)
 
-        try:
-            conn = await self._connect(context, req)
-            context.conn = conn
-        except CommandExecutionException as e:
-             return CommandExecutionResponse.failed(str(e))
+        conn = await self._connect(context, req)
+        context.conn = conn
 
         if context.cmd_config.disconnects_ssh:
             return await self._handle_fire_and_forget(context)
@@ -615,7 +683,10 @@ class CommandService:
             await self.repo.update(command_id, lambda s: s.mark_killed(message), ttl)
             return
 
-        logger.info(f"Initiating cross-pod kill for {command_id} on {state.host}:{state.port}")
+        logger.info(
+            f"Initiating cross-pod kill for {command_id} on {state.resolved_ip}:{state.port} "
+            f"(host_type={state.host_type.value}, raw={state.host})"
+        )
         
         ssh_config = self._load_ssh_config(state.ssh_config)
         authenticator = create_authenticator(ssh_config)
@@ -623,7 +694,7 @@ class CommandService:
         
         try:
             conn = await asyncio.wait_for(
-                asyncssh.connect(host=state.host, port=state.port, username=state.username, **conn_kwargs),
+                asyncssh.connect(host=state.resolved_ip, port=state.port, username=state.username, **conn_kwargs),
                 timeout=10
             )
             try:

@@ -64,18 +64,36 @@ def get_current_user(required_scopes: list[str] | None = None) -> Callable:
 
 from app.core.redis_client import RedisClient
 from app.repositories.command_state_repository import CommandStateRepository
+from app.repositories.inventory_repository import (
+    HttpInventoryRepository,
+    InventoryRepository,
+)
 from app.repositories.trace_cache_repository import (
     RedisTraceCache,
     TraceCacheRepository,
 )
 from app.services.command_service import CommandService
+from app.core.config import get_settings
 
 async def get_command_state_repository() -> CommandStateRepository:
     redis = await RedisClient.get_client()
     return CommandStateRepository(redis)
 
-async def get_command_service(repo: CommandStateRepository = Depends(get_command_state_repository)) -> CommandService:
-    return CommandService(repo)
+
+async def get_inventory_repository() -> InventoryRepository:
+    s = get_settings()
+    return HttpInventoryRepository(
+        base_url=s.INVENTORY_API_URL,
+        token=s.INVENTORY_API_TOKEN,
+        timeout_seconds=s.INVENTORY_API_TIMEOUT_SECONDS,
+    )
+
+
+async def get_command_service(
+    repo: CommandStateRepository = Depends(get_command_state_repository),
+    inventory: InventoryRepository = Depends(get_inventory_repository),
+) -> CommandService:
+    return CommandService(repo, inventory)
 
 
 async def get_trace_cache_repository() -> TraceCacheRepository:

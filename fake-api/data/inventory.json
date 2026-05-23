@@ -1,0 +1,26 @@
+[
+  {
+    "hostname": "node-a01",
+    "ip": "10.0.1.10",
+    "bastion": {
+      "hostname": "bastion-a",
+      "ip": "10.0.0.5"
+    }
+  },
+  {
+    "hostname": "node-a02",
+    "ip": "10.0.1.11",
+    "bastion": {
+      "hostname": "bastion-a",
+      "ip": "10.0.0.5"
+    }
+  },
+  {
+    "hostname": "node-b01",
+    "ip": "10.0.2.10",
+    "bastion": {
+      "hostname": "bastion-b",
+      "ip": "10.0.0.6"
+    }
+  }
+]
