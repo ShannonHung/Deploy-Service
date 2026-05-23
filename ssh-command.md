@@ -4,11 +4,22 @@
 
 ---
 
+> **Migration notes (2026-05-18)**
+>
+> 兩項相關變更同時上線，呼叫端需要調整：
+>
+> 1. **新增 `host_type` 欄位**（`ip` / `bastion` / `hostname`，預設 `ip`）。`hostname` 與 `bastion` 會透過 Inventory API 解析成 IP。詳見下方 [Host resolution](#35-host-resolution)。
+> 2. **業務錯誤改回真正的 4xx/5xx**。以前許多輸入/政策錯誤都是 `200 + {"status":"failed"}`，現在會回對應的 HTTP 狀態碼與結構化 error body（`{"error": {"code","message"}, "request_id": ...}`）。完整對照見 [Errors](#errors-2026-05-18)。
+>
+> 客戶端如果原本用 `data.status == "failed"` 判斷錯誤，需要改成檢查 HTTP status code。
+
+---
+
 ## 目錄
 
 1. [系統總覽](#1-系統總覽)
 2. [請求生命週期](#2-請求生命週期)
-3. [白名單與管線設計](#3-白名單與管線設計)
+3. [白名單與管線設計](#3-白名單與管線設計) — 包含 [Host resolution](#35-host-resolution)
 4. [Anti-Injection 防注入架構](#4-anti-injection-防注入架構)
 5. [進程群組追蹤與 Timeout Kill 機制](#5-進程群組追蹤與-timeout-kill-機制)
 6. [Fire-and-Forget 斷線指令（如 Reboot）](#6-fire-and-forget-斷線指令如-reboot)
@@ -16,6 +27,8 @@
 8. [Graceful Shutdown（優雅關機）](#8-graceful-shutdown優雅關機)
 9. [Concurrency Protection（並行保護）](#9-concurrency-protection並行保護)
 10. [結構化日誌](#10-結構化日誌)
+- [Errors (2026-05-18+)](#errors-2026-05-18)
+- [Local Inventory mock](#local-inventory-mock)
 11. [附錄：核心檔案索引](#11-附錄核心檔案索引)
 
 ---
@@ -124,6 +137,30 @@ class ExecutionContext:
 1. **黑名單優先**：若目標 Host 匹配 `deny_hosts` 中的任一項目，立即拒絕。
 2. **白名單校驗**：若目標 Host 不匹配 `allow_hosts` 中的任何項目，亦會拒絕。
 
+> **重要**：allow/deny 比對的對象一律是「**解析後的 IP**」，不是使用者送入的 `host` 字串。即使 `host_type=hostname` 帶進來的是 `node-a01`，policy 也只看 Inventory 回傳的真實 IP，使用者沒辦法藉由換主機名繞過 IP 黑名單。
+
+
+### 3.5 Host resolution
+
+請求 body 新增了 `host_type` 欄位（預設 `ip`），決定 `host` 欄位要怎麼被解析成最終 SSH 目標：
+
+| `host_type`  | `host` 填什麼            | 連線到                                          |
+|--------------|--------------------------|-------------------------------------------------|
+| `ip` (預設)  | 直接的 IP 字串           | 該 IP                                           |
+| `hostname`   | 主機名稱                  | 該主機在 Inventory 中登記的 IP                  |
+| `bastion`    | 該主機之 bastion 主機名稱 | Inventory 回應裡 `bastion.ip` 欄位              |
+
+解析交給 `HostResolver` 介面（`app/repositories/host_resolver.py`），每個 `host_type` 對應一個實作，由 `create_host_resolver(host_type, inventory)` 工廠決定要回哪一個 — `CommandService` 自己完全不知道有幾種 host_type，只拿到一個 `ResolvedHost`（含 `ip` 與 metadata）。
+
+**新增一種 host_type**：
+1. 在 `HostType` enum 加 literal；
+2. 寫一個新的 `XxxHostResolver` 實作 `resolve(host) -> ResolvedHost`；
+3. 在 `create_host_resolver` 的 dispatch 加 branch；
+4. 寫對應的 unit test。
+
+`CommandService`、router、Redis state schema 都不用動。
+
+解析得到的 IP 會同時：(a) 拿去做 allow/deny 比對、(b) 真正連 SSH、(c) 連同 `host_type` 一起存進 Redis 的 `CommandState`，因此 cross-pod kill 不需要再查 Inventory（即使 Inventory 後來掛了或主機改名，killer pod 仍可用當初記下的 IP 重連、送 SIGTERM）。
 
 ### Python-Side 管線串接
 
@@ -527,6 +564,50 @@ logger.info(
 - 軟殺/硬殺每一步的結果
 - Fire-and-forget 連線斷開偵測
 - 並行上限拒絕事件
+
+---
+
+## Errors (2026-05-18+)
+
+業務錯誤一律改回對應的 HTTP 狀態碼，搭配統一的 error body：
+
+```json
+{ "error": { "code": "...", "message": "..." }, "request_id": "..." }
+```
+
+| 情境                                                  | 舊             | 新     | Exception                       |
+|-------------------------------------------------------|----------------|--------|---------------------------------|
+| 指令不在使用者白名單                                   | 200 failed     | **403** | `ForbiddenException`            |
+| Host 被 `deny_hosts` / 不在 `allow_hosts`             | 200 failed     | **403** | `ForbiddenException`            |
+| 缺必要 argument                                       | 200 failed     | **400** | `CommandExecutionException`     |
+| Argument 不符合 `validation_regex`                    | 200 failed     | **400** | `CommandExecutionException`     |
+| Anti-injection 偵測到危險字元                          | 200 failed     | **400** | `CommandExecutionException`     |
+| 使用者白名單檔案不存在                                 | 200 failed     | **403** | `ForbiddenException`            |
+| SSH 設定檔不存在                                       | 200 failed     | **500** | `BaseAppException`              |
+| 容量滿（`COMMAND_MAX_RUNNING`）                       | 200 failed     | **503** | `ServiceUnavailableException`   |
+| Inventory：hostname 查無                              | (新)           | **404** | `NotFoundException`             |
+| Inventory：timeout                                    | (新)           | **504** | `UpstreamTimeoutException`      |
+| Inventory：401/403/連線失敗                            | (新)           | **502** | `UpstreamUnavailableException`  |
+| SSH 連線 timeout                                       | 504            | 504    | `UpstreamTimeoutException`      |
+| SSH 連線拒絕 / 認證失敗 / DNS                          | 502            | 502    | `UpstreamUnavailableException`  |
+| `host_type` 不是合法 enum 值                          | (新)           | **422** | Pydantic                        |
+| `GET /command/execution/{id}` 查無                    | 404            | **404** | `NotFoundException`             |
+| `POST /command/execution/{id}/kill` 對非 RUNNING 狀態 | 200 failed     | **409** | `ConflictException`             |
+| 指令正常執行（不論 exit_code）                         | 200            | 200    | —                               |
+
+`error.code` 是字串常數（例：`FORBIDDEN`、`NOT_FOUND`、`COMMAND_EXECUTION_ERROR`、`SERVICE_UNAVAILABLE`、`UPSTREAM_TIMEOUT`、`UPSTREAM_UNAVAILABLE`、`CONFLICT`），定義在 `app/core/exceptions.py`。
+
+---
+
+## Local Inventory mock
+
+`host_type=hostname` / `bastion` 需要呼叫公司內網的 Inventory API。本機開發時請用內附的 fake server：
+
+```bash
+make inventory-api       # 啟動於 http://localhost:9001
+```
+
+實作在 `fake-api/main.py`（單檔 FastAPI），資料來源是 `fake-api/data/inventory.json`（靜態 JSON）。`.env.dev` 已預設指向 `http://localhost:9001`。若要新增測試用主機，編輯 `inventory.json` 即可，不必動服務碼。fake server **不**模擬 latency 或 retry，僅夠驗證解析與錯誤路由。
 
 ---
 
