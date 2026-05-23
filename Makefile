@@ -17,6 +17,7 @@ help:
 	@echo "  make start        啟動伺服器（使用 .env，不帶 APP_ENV）"
 	@echo "  make dev          啟動開發伺服器（使用 .env + .env.dev，熱重載）"
 	@echo "  make prod         啟動生產伺服器（使用 .env + .env.prod）"
+	@echo "  make inventory-api 啟動本機假 Inventory API（port 9001）"
 	@echo ""
 	@echo "  make test         執行全部測試"
 	@echo "  make test-unit    只執行 unit tests"
@@ -60,6 +61,11 @@ dev: redis-up
 .PHONY: prod
 prod:
 	APP_ENV=prod $(UV) run uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# inventory-api: 啟動本機假 Inventory API (port 9001)
+.PHONY: inventory-api
+inventory-api:
+	APP_ENV=dev $(UV) run uvicorn fake-api.main:app --reload --port 9001
 
 # ─── Test ────────────────────────────────────────────────────────────────────
 .PHONY: test
