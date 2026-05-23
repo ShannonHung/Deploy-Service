@@ -28,3 +28,6 @@ htmlcov/
 # ── Data files ───────────────────────────────────────────────────────────────
 data/SSH*.json
 data/ssh_keys/
+
+# ── Test-generated SSH key (created on the fly by tests/conftest.py) ────────
+tests/fixtures/SSH-default.json
