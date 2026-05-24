@@ -102,6 +102,11 @@ test-all:
 	APP_ENV=test RUN_E2E=1 $(PYTEST) tests/ -v
 
 # test-e2e: 只跑 e2e；需要先起 Redis + SSH nodes
+# 建議執行順序：
+#   1. make redis-up          ← 啟動 Redis
+#   2. make setup-ssh-nodes   ← 建立 SSH CA + 啟動 docker SSH nodes
+#   3. make inventory-api     ← 在另一個 terminal 啟動假 Inventory API（port 9001）
+#   4. make test-e2e          ← 執行 e2e 測試
 .PHONY: test-e2e
 test-e2e:
 	APP_ENV=test RUN_E2E=1 $(PYTEST) tests/e2e/ -v
