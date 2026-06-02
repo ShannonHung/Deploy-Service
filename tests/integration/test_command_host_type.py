@@ -11,14 +11,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from app.core.dependencies import (
+    get_bastion_mapping_repository,
     get_command_state_repository,
     get_inventory_repository,
+    get_vm_repository,
 )
 from app.main import create_app
+from app.repositories.bastion_mapping_repository import BastionMapping
 from app.repositories.inventory_repository import (
     InventoryBastion,
     InventoryHostInfo,
     InventoryRepository,
+)
+from app.repositories.vm_repository import VmInfo, VmK8sCluster
+from tests.fixtures.cluster import (
+    InMemoryBastionMappingRepository,
+    InMemoryVmRepository,
 )
 from tests.fixtures.inventory import InMemoryInventoryRepository
 
@@ -152,16 +160,45 @@ def test_host_type_hostname_connects_to_resolved_ip(client_with_inventory):
         assert called_host == "10.0.1.10"
 
 
-def test_host_type_bastion_connects_to_bastion_ip(client_with_inventory):
+@pytest.fixture
+def client_with_bastion(inventory):
+    """TestClient with inventory, vm, and bastion-mapping repos all overridden."""
+    app = create_app()
+    state_repo = _InMemoryCommandStateRepo()
+    vm_repo = InMemoryVmRepository({
+        "node1": VmInfo(
+            id=1, name="node1",
+            k8s_cluster=VmK8sCluster(id=1, name="type1-cluster-c1"),
+        ),
+    })
+    mapping_repo = InMemoryBastionMappingRepository({
+        "type1": [
+            BastionMapping(
+                pattern=["type1-cluster-(c1|c2|c3)", "type1-cluster.*"],
+                runner="r1", bastion="bastion-type1",
+                bastion_ip="10.99.99.1",
+            )
+        ]
+    })
+    app.dependency_overrides[get_inventory_repository] = lambda: inventory
+    app.dependency_overrides[get_command_state_repository] = lambda: state_repo
+    app.dependency_overrides[get_vm_repository] = lambda: vm_repo
+    app.dependency_overrides[get_bastion_mapping_repository] = lambda: mapping_repo
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
+
+
+def test_host_type_bastion_connects_to_mapped_bastion_ip(client_with_bastion):
     p, _ = _patch_asyncssh()
     with p as mock_connect:
-        token = _get_token(client_with_inventory)
-        resp = client_with_inventory.post(
+        token = _get_token(client_with_bastion)
+        resp = client_with_bastion.post(
             "/api/v1/command/execution",
             headers={"Authorization": f"Bearer {token}"},
             json={
                 "command_name": "list_file",
-                "host": "node-a01",
+                "host": "node1",
                 "host_type": "bastion",
                 "port": 22,
                 "username": "root",
@@ -170,7 +207,7 @@ def test_host_type_bastion_connects_to_bastion_ip(client_with_inventory):
         )
         assert resp.status_code == 200, resp.text
         called_host = mock_connect.call_args.kwargs["host"]
-        assert called_host == "10.0.0.5"
+        assert called_host == "10.99.99.1"
 
 
 def test_hostname_not_in_inventory_returns_404(client_with_inventory):
