@@ -108,7 +108,7 @@ class DeployService:
         variables = self._build_variables(action, extra_variables)
         _logger.info(
             "Triggering pipeline | action=%s | ref=%s | extra_vars=%s",
-            action, ref, [v.key for v in extra_variables],
+            action, ref, {v.key: v.value for v in extra_variables},
         )
         return await self._repo.trigger(ref=ref, variables=variables)
 
