@@ -22,6 +22,7 @@ def _require_auth(authorization: str | None) -> None:
 
 def _read_with_fallback(prefix: str, key: str) -> dict:
     """Return JSON from data/{prefix}-{key}.json, falling back to {prefix}-not-found.json."""
+    # Dev-only fake API: no path-traversal guard. Never run this in prod.
     specific = _DATA_DIR / f"{prefix}-{key}.json"
     fallback = _DATA_DIR / f"{prefix}-not-found.json"
     target = specific if specific.is_file() else fallback
