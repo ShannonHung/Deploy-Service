@@ -104,6 +104,7 @@ class SSHConnectionConfig(BaseModel):
 
 class CommandOption(BaseModel):
     timeout_seconds: int = 30
+    bastion_type: Optional[str] = None  # None → fall back to settings.BASTION_DEFAULT_TYPE
 
 class CommandExecutionRequest(BaseModel):
     command_name: str
