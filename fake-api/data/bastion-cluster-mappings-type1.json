@@ -4,7 +4,7 @@
   "previous": null,
   "results": [
     {
-      "pattern": ["type1-cluster-(c1|c2|c3)", "type1-cluster*"],
+      "pattern": ["type1-cluster-(c1|c2|c3)", "type1-cluster.*"],
       "runner": "type1-runner",
       "bastion": "type1-bastion",
       "bastion_ip": "10.223.192.40"
