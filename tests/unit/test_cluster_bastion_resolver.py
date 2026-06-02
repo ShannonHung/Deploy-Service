@@ -160,3 +160,27 @@ async def test_fullmatch_boundary_strict_alternation():
     )
     with pytest.raises(NotFoundException):
         await resolver.resolve("node1")
+
+
+async def test_fullmatch_rejects_prefix_only_match():
+    """A pattern that matches only a prefix of cluster_name must NOT be selected.
+
+    Pattern 'type1-cluster' under re.match would erroneously match
+    'type1-cluster-extra'; under re.fullmatch (correct) it does not.
+    This test would fail if the resolver were regressed to re.match.
+    """
+    mappings = {
+        "type1": [
+            BastionMapping(
+                pattern=["type1-cluster"],
+                runner="r",
+                bastion="b",
+                bastion_ip="10.0.0.1",
+            )
+        ]
+    }
+    resolver = ClusterBastionHostResolver(
+        _vm_repo("type1-cluster-extra"), _mapping_repo(mappings), "type1"
+    )
+    with pytest.raises(NotFoundException):
+        await resolver.resolve("node1")
