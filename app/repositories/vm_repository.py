@@ -43,6 +43,8 @@ class VmInfo(BaseModel):
 
 
 class VmRepository(ABC):
+    """Look up a VM by its node name."""
+
     @abstractmethod
     async def lookup_by_name(self, node_name: str) -> VmInfo: ...
 
@@ -93,7 +95,12 @@ class HttpVmRepository(VmRepository):
             )
 
         payload = resp.json()
-        results = payload.get("results", [])
+        if not isinstance(payload, dict) or "results" not in payload:
+            raise UpstreamUnavailableException(
+                f"VM API returned unexpected payload shape for '{node_name}'.",
+                detail={"node_name": node_name},
+            )
+        results = payload["results"]
         if len(results) == 0:
             raise NotFoundException(
                 f"VM '{node_name}' not found.",

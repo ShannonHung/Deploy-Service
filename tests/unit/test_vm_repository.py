@@ -97,3 +97,10 @@ async def test_lookup_connect_error_raises_upstream_unavailable():
     repo = _repo(handler)
     with pytest.raises(UpstreamUnavailableException):
         await repo.lookup_by_name("x")
+
+
+async def test_lookup_malformed_payload_raises_upstream_unavailable():
+    """200 with missing 'results' key is treated as upstream contract violation."""
+    repo = _repo(lambda r: httpx.Response(200, json={"data": []}))
+    with pytest.raises(UpstreamUnavailableException):
+        await repo.lookup_by_name("x")
