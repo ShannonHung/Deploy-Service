@@ -145,11 +145,11 @@ class ExecutionContext:
 
 請求 body 新增了 `host_type` 欄位（預設 `ip`），決定 `host` 欄位要怎麼被解析成最終 SSH 目標：
 
-| `host_type`  | `host` 填什麼            | 連線到                                          |
-|--------------|--------------------------|-------------------------------------------------|
-| `ip` (預設)  | 直接的 IP 字串           | 該 IP                                           |
-| `hostname`   | 主機名稱                  | 該主機在 Inventory 中登記的 IP                  |
-| `bastion`    | 該主機之 bastion 主機名稱 | Inventory 回應裡 `bastion.ip` 欄位              |
+| `host_type`  | `host` 填什麼            | 連線到                                                                                   |
+|--------------|--------------------------|------------------------------------------------------------------------------------------|
+| `ip` (預設)  | 直接的 IP 字串           | 該 IP                                                                                    |
+| `hostname`   | 主機名稱                  | 該主機在 Inventory 中登記的 IP                                                           |
+| `bastion`    | 節點名稱                  | 先查 VM 取得所屬 cluster，再從 bastion-cluster mapping 表找出對應的 bastion IP            |
 
 解析交給 `HostResolver` 介面（`app/repositories/host_resolver.py`），每個 `host_type` 對應一個實作，由 `create_host_resolver(host_type, inventory)` 工廠決定要回哪一個 — `CommandService` 自己完全不知道有幾種 host_type，只拿到一個 `ResolvedHost`（含 `ip` 與 metadata）。
 
@@ -162,6 +162,19 @@ class ExecutionContext:
 `CommandService`、router、Redis state schema 都不用動。
 
 解析得到的 IP 會同時：(a) 拿去做 allow/deny 比對、(b) 真正連 SSH、(c) 連同 `host_type` 一起存進 Redis 的 `CommandState`，因此 cross-pod kill 不需要再查 Inventory（即使 Inventory 後來掛了或主機改名，killer pod 仍可用當初記下的 IP 重連、送 SIGTERM）。
+
+### `host_type=bastion`
+
+Resolution chain:
+
+1. `GET {CLUSTER_API_URL}/api/v1/vms?name={raw_host}` — look up the node by name; expect exactly one result. Empty results → `404 NOT_FOUND`. More than one result → `502 UPSTREAM_UNAVAILABLE` (unique-name invariant).
+2. Read `vm.k8s_cluster.name` as `cluster_name`.
+3. `GET {CLUSTER_API_URL}/api/v1/bastion-cluster-mappings?type={bastion_type}` — list all mappings for the selected type. Empty → `404 NOT_FOUND`.
+4. Iterate `results` top-to-bottom; within each entry iterate `pattern` top-to-bottom. The first `re.fullmatch(pattern, cluster_name)` hit selects the entry's `bastion_ip`. No match → `404 NOT_FOUND`.
+
+`bastion_type` is taken from `option.bastion_type` in the request body. If omitted (or `null`), the service falls back to the `BASTION_DEFAULT_TYPE` environment variable.
+
+Old clients that do not send `option.bastion_type` continue to work — they implicitly use the default type. The HTTP route and query parameters of `POST /api/v1/command/execution` are unchanged.
 
 ### Python-Side 管線串接
 

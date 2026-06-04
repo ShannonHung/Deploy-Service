@@ -20,6 +20,8 @@ from app.core.redis_client import RedisClient
 from app.repositories.ssh_auth_repository import create_authenticator
 from app.repositories.command_state_repository import CommandStateRepository
 from app.repositories.inventory_repository import InventoryRepository
+from app.repositories.bastion_mapping_repository import BastionMappingRepository
+from app.repositories.vm_repository import VmRepository
 from app.repositories.host_resolver import ResolvedHost, create_host_resolver
 from app.core.exceptions import (
     CommandExecutionException,
@@ -51,9 +53,13 @@ class CommandService:
         self,
         repo: CommandStateRepository,
         inventory: Optional[InventoryRepository],
+        vm_repo: Optional[VmRepository] = None,
+        mapping_repo: Optional[BastionMappingRepository] = None,
     ):
         self.repo = repo
         self.inventory = inventory
+        self.vm_repo = vm_repo
+        self.mapping_repo = mapping_repo
 
     def _validate_anti_injection(self, user_input: str):
         """Early-rejection layer: block inputs containing shell meta-characters.
@@ -171,7 +177,18 @@ class CommandService:
         """
         whitelist = self._load_user_whitelist(username)
 
-        resolver = create_host_resolver(req.host_type, self.inventory)
+        bastion_type = (
+            req.option.bastion_type
+            if req.option and req.option.bastion_type
+            else settings.BASTION_DEFAULT_TYPE
+        )
+        resolver = create_host_resolver(
+            req.host_type,
+            inventory=self.inventory,
+            vm_repo=self.vm_repo,
+            mapping_repo=self.mapping_repo,
+            bastion_type=bastion_type,
+        )
         resolved = await resolver.resolve(req.host)
 
         if any(re.match(pattern, resolved.ip) for pattern in whitelist.deny_hosts):

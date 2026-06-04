@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     INVENTORY_API_TOKEN: str = "fake-inventory-token"
     INVENTORY_API_TIMEOUT_SECONDS: float = 5.0
 
+    # ── Cluster / Bastion mapping API ─────────────────────────────────────────
+    CLUSTER_API_URL: str = "http://localhost:9001"
+    CLUSTER_API_TOKEN: str = "fake-cluster-token"
+    CLUSTER_API_TIMEOUT_SECONDS: float = 5.0
+    BASTION_DEFAULT_TYPE: str = "type1"
+
     # ── Redis ─────────────────────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
     COMMAND_RESULT_TTL_SECONDS: int = 86400

@@ -1,0 +1,15 @@
+{
+  "count": 1,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 123,
+      "name": "node1",
+      "k8s-cluster": {
+        "id": 123,
+        "name": "type1-cluster-c1"
+      }
+    }
+  ]
+}
