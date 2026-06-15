@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     CLUSTER_API_URL: str = "http://localhost:9001"
     CLUSTER_API_TOKEN: str = "fake-cluster-token"
     CLUSTER_API_TIMEOUT_SECONDS: float = 5.0
-    BASTION_DEFAULT_TYPE: str = "type1"
+    BASTION_DEFAULT_TYPE: str = ""
 
     # ── Redis ─────────────────────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"

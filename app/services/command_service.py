@@ -182,6 +182,11 @@ class CommandService:
             if req.option and req.option.bastion_type
             else settings.BASTION_DEFAULT_TYPE
         )
+        if not bastion_type:
+            raise CommandExecutionException(
+                "No bastion type specified and BASTION_DEFAULT_TYPE is not configured. "
+                "Set BASTION_DEFAULT_TYPE in your environment or pass option.bastion_type in the request.",
+            )
         resolver = create_host_resolver(
             req.host_type,
             inventory=self.inventory,
@@ -526,7 +531,11 @@ class CommandService:
         )
         _local_running_commands[command_id] = entry
 
-        timeout_seconds = context.raw_request.option.timeout_seconds if context.raw_request.option.timeout_seconds else settings.COMMAND_DEFAULT_TIMEOUT
+        opt = context.raw_request.option
+        timeout_seconds = (
+            opt.timeout_seconds if opt is not None and opt.timeout_seconds is not None
+            else settings.COMMAND_DEFAULT_TIMEOUT
+        )
 
         cmd_str_preview = " | ".join(shlex.join(cmd) for cmd in context.pipeline_cmds)
 
