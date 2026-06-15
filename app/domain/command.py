@@ -15,6 +15,11 @@ class CommandStatus(str, Enum):
     SUCCESS = "success"
     FAILED = "failed"
 
+class HostType(str, Enum):
+    IP = "ip"
+    BASTION = "bastion"
+    HOSTNAME = "hostname"
+
 class CommandState(BaseModel):
     command_id: str
     status: CommandStatus
@@ -24,6 +29,8 @@ class CommandState(BaseModel):
 
     # execution metadata
     host: str
+    host_type: HostType = HostType.IP
+    resolved_ip: str
     port: int
     username: str
     ssh_config: str
@@ -97,10 +104,12 @@ class SSHConnectionConfig(BaseModel):
 
 class CommandOption(BaseModel):
     timeout_seconds: int = 30
+    bastion_type: Optional[str] = None  # None → fall back to settings.BASTION_DEFAULT_TYPE
 
 class CommandExecutionRequest(BaseModel):
     command_name: str
     host: str
+    host_type: HostType = HostType.IP
     port: int = 22
     username: str
     ssh_config: str = "default"
@@ -114,6 +123,10 @@ class CommandExecutionResponse(BaseModel):
     exit_status: Optional[int] = None
     output: Optional[str] = None
     exec_command: Optional[str] = None
+    # Populated only by GET /command/execution/{id}; surfaced from CommandState.
+    host_type: Optional[HostType] = None
+    resolved_ip: Optional[str] = None
+    pgids: List[int] = Field(default_factory=list)
 
     @classmethod
     def failed(cls, message: str, exit_status: Optional[int] = None, output: Optional[str] = None, command_id: Optional[str] = None) -> "CommandExecutionResponse":
@@ -143,5 +156,6 @@ class ExecutionContext:
     raw_request: CommandExecutionRequest
     cmd_config: CommandWhitelistConfig
     ssh_config: SSHConnectionConfig
+    resolved_host: "ResolvedHost"  # forward-ref to avoid circular import
     conn: Optional[asyncssh.SSHClientConnection] = None
     pipeline_cmds: List[List[str]] = field(default_factory=list)

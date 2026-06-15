@@ -157,6 +157,15 @@ class ConflictException(BaseAppException):
     log_level = logging.WARNING
 
 
+class ServiceUnavailableException(BaseAppException):
+    """Raised when the service temporarily cannot accept the request
+    (e.g. running-command pool is full)."""
+
+    http_status = 503
+    error_code = "SERVICE_UNAVAILABLE"
+    log_level = logging.WARNING
+
+
 class CommandExecutionException(BaseAppException):
     """Raised for validation or system setup failures before or during execution."""
 

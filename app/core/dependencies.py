@@ -17,6 +17,7 @@ from fastapi import Depends
 from fastapi.security import OAuth2PasswordBearer
 
 from app.core.exceptions import AuthException, ForbiddenException
+from app.core.logging import RequestIdFilter
 from app.core.security import decode_access_token
 from app.domain.models import User
 
@@ -58,24 +59,71 @@ def get_current_user(required_scopes: list[str] | None = None) -> Callable:
                 detail={"required": required, "missing": missing},
             )
 
+        RequestIdFilter.set_account(account)
         return User(account=account, scopes=scopes)
 
     return _dependency
 
 from app.core.redis_client import RedisClient
 from app.repositories.command_state_repository import CommandStateRepository
+from app.repositories.inventory_repository import (
+    HttpInventoryRepository,
+    InventoryRepository,
+)
+from app.repositories.vm_repository import (
+    HttpVmRepository,
+    VmRepository,
+)
+from app.repositories.bastion_mapping_repository import (
+    HttpBastionMappingRepository,
+    BastionMappingRepository,
+)
 from app.repositories.trace_cache_repository import (
     RedisTraceCache,
     TraceCacheRepository,
 )
 from app.services.command_service import CommandService
+from app.core.config import get_settings
 
 async def get_command_state_repository() -> CommandStateRepository:
     redis = await RedisClient.get_client()
     return CommandStateRepository(redis)
 
-async def get_command_service(repo: CommandStateRepository = Depends(get_command_state_repository)) -> CommandService:
-    return CommandService(repo)
+
+async def get_inventory_repository() -> InventoryRepository:
+    s = get_settings()
+    return HttpInventoryRepository(
+        base_url=s.INVENTORY_API_URL,
+        token=s.INVENTORY_API_TOKEN,
+        timeout_seconds=s.INVENTORY_API_TIMEOUT_SECONDS,
+    )
+
+
+async def get_vm_repository() -> VmRepository:
+    s = get_settings()
+    return HttpVmRepository(
+        base_url=s.CLUSTER_API_URL,
+        token=s.CLUSTER_API_TOKEN,
+        timeout_seconds=s.CLUSTER_API_TIMEOUT_SECONDS,
+    )
+
+
+async def get_bastion_mapping_repository() -> BastionMappingRepository:
+    s = get_settings()
+    return HttpBastionMappingRepository(
+        base_url=s.CLUSTER_API_URL,
+        token=s.CLUSTER_API_TOKEN,
+        timeout_seconds=s.CLUSTER_API_TIMEOUT_SECONDS,
+    )
+
+
+async def get_command_service(
+    repo: CommandStateRepository = Depends(get_command_state_repository),
+    inventory: InventoryRepository = Depends(get_inventory_repository),
+    vm_repo: VmRepository = Depends(get_vm_repository),
+    mapping_repo: BastionMappingRepository = Depends(get_bastion_mapping_repository),
+) -> CommandService:
+    return CommandService(repo, inventory, vm_repo, mapping_repo)
 
 
 async def get_trace_cache_repository() -> TraceCacheRepository:

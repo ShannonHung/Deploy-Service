@@ -44,12 +44,21 @@ class DeployService:
             variables[var.key] = var.value
         return variables
 
+    # Variables that identify the caller but are irrelevant to duplicate detection.
+    _EXCLUDE_FROM_MATCH: frozenset[str] = frozenset({"TRIGGER_FROM"})
+
     def _variables_match(
         self, pipeline: PipelineData, expected: dict[str, str]
     ) -> bool:
-        """Return True if a pipeline was triggered with exactly *expected* variables."""
-        actual = {v.key: v.value for v in pipeline.variables}
-        return actual == expected
+        """Return True if a pipeline was triggered with the same business variables.
+
+        TRIGGER_FROM (and any other caller-identity keys) are excluded so that
+        a pipeline started by user A is correctly detected as a duplicate by user B.
+        """
+        exclude = self._EXCLUDE_FROM_MATCH
+        actual = {v.key: v.value for v in pipeline.variables if v.key not in exclude}
+        filtered_expected = {k: v for k, v in expected.items() if k not in exclude}
+        return actual == filtered_expected
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -71,7 +80,7 @@ class DeployService:
 
         _logger.info(
             "Duplicate check | ref=%s | target_vars=%s | active=%d | matches=%d",
-            ref, list(target_vars.keys()), len(running), len(duplicates),
+            ref, target_vars, len(running), len(duplicates),
         )
         return RunningPipelinesData(
             has_running=bool(duplicates),
@@ -107,8 +116,8 @@ class DeployService:
         # ── Trigger ───────────────────────────────────────────────────────────
         variables = self._build_variables(action, extra_variables)
         _logger.info(
-            "Triggering pipeline | action=%s | ref=%s | extra_vars=%s",
-            action, ref, [v.key for v in extra_variables],
+            "Triggering pipeline | action=%s | ref=%s | variables=%s",
+            action, ref, variables,
         )
         return await self._repo.trigger(ref=ref, variables=variables)
 
