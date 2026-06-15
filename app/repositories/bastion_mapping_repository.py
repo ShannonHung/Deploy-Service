@@ -85,7 +85,13 @@ class HttpBastionMappingRepository(BastionMappingRepository):
                 detail={"type": type_name, "status_code": resp.status_code},
             )
 
-        payload = resp.json()
+        try:
+            payload = resp.json()
+        except Exception:
+            raise UpstreamUnavailableException(
+                f"Bastion mapping API returned non-JSON response for type '{type_name}'.",
+                detail={"type": type_name},
+            )
         if not isinstance(payload, dict) or "results" not in payload:
             raise UpstreamUnavailableException(
                 f"Bastion mapping API returned unexpected payload shape for type '{type_name}'.",

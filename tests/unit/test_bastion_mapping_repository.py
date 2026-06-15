@@ -101,3 +101,10 @@ async def test_list_connect_error_raises_upstream_unavailable():
     repo = _repo(handler)
     with pytest.raises(UpstreamUnavailableException):
         await repo.list_mappings("type1")
+
+
+async def test_list_non_json_200_raises_upstream_unavailable():
+    """200 with non-JSON body (e.g. WAF HTML page) must raise UpstreamUnavailableException."""
+    repo = _repo(lambda r: httpx.Response(200, content=b"<html>error</html>"))
+    with pytest.raises(UpstreamUnavailableException):
+        await repo.list_mappings("type1")

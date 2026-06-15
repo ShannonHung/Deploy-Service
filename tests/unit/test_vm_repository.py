@@ -104,3 +104,10 @@ async def test_lookup_malformed_payload_raises_upstream_unavailable():
     repo = _repo(lambda r: httpx.Response(200, json={"data": []}))
     with pytest.raises(UpstreamUnavailableException):
         await repo.lookup_by_name("x")
+
+
+async def test_lookup_non_json_200_raises_upstream_unavailable():
+    """200 with non-JSON body (e.g. WAF HTML page) must raise UpstreamUnavailableException."""
+    repo = _repo(lambda r: httpx.Response(200, content=b"<html>error</html>"))
+    with pytest.raises(UpstreamUnavailableException):
+        await repo.lookup_by_name("x")
