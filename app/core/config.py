@@ -38,8 +38,13 @@ class Settings(BaseSettings):
     GITLAB_TOKEN: str = ""
     GITLAB_PROJECT_ID: int = 0
     GITLAB_AUTH_JSON_PATH: str = "/data/gitlab_auth.json"
-    # Upper bound on a single GitLab trace fetch. Should be shorter than the
-    # ingress/proxy read timeout so we return our own 504 first.
+    # TCP-level timeout passed to the python-gitlab HTTP client. Covers all
+    # API calls (trigger, get, list, cancel, retry). Set high enough to
+    # tolerate a slow internal GitLab instance while still being shorter than
+    # any upstream ingress timeout so we return our own 504 first.
+    GITLAB_HTTP_TIMEOUT_SECONDS: int = 120
+    # Upper bound on a single GitLab trace fetch (asyncio-level guard).
+    # Should be ≤ GITLAB_HTTP_TIMEOUT_SECONDS.
     GITLAB_TRACE_TIMEOUT_SECONDS: int = 45
     # Cache TTL for finished-job traces (immutable). A poll for a cached
     # finished job hits Redis and skips GitLab entirely.
@@ -69,7 +74,7 @@ class Settings(BaseSettings):
     CLUSTER_API_URL: str = "http://localhost:9001"
     CLUSTER_API_TOKEN: str = "fake-cluster-token"
     CLUSTER_API_TIMEOUT_SECONDS: float = 5.0
-    BASTION_DEFAULT_TYPE: str = "type1"
+    BASTION_DEFAULT_TYPE: str = ""
 
     # ── Redis ─────────────────────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"

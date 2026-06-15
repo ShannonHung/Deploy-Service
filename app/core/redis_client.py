@@ -40,12 +40,23 @@ class RedisClient:
         return cls._binary_instance
 
     @classmethod
+    async def _close_one(cls, client: redis.Redis, label: str) -> None:
+        try:
+            await client.aclose()
+        except RuntimeError:
+            # The client was created on a different event loop (happens when a
+            # TestClient fixture shares the singleton with a previous test's
+            # loop).  Disconnect without waiting so we don't block the current
+            # loop on a Future that belongs to another one.
+            await client.aclose(close_connection_pool=False)
+
+    @classmethod
     async def close(cls):
         if cls._instance is not None:
             logger.info("Closing Redis connection.")
-            await cls._instance.aclose()
+            await cls._close_one(cls._instance, "default")
             cls._instance = None
         if cls._binary_instance is not None:
             logger.info("Closing Redis (binary) connection.")
-            await cls._binary_instance.aclose()
+            await cls._close_one(cls._binary_instance, "binary")
             cls._binary_instance = None

@@ -17,6 +17,7 @@ from fastapi import Depends
 from fastapi.security import OAuth2PasswordBearer
 
 from app.core.exceptions import AuthException, ForbiddenException
+from app.core.logging import RequestIdFilter
 from app.core.security import decode_access_token
 from app.domain.models import User
 
@@ -58,6 +59,7 @@ def get_current_user(required_scopes: list[str] | None = None) -> Callable:
                 detail={"required": required, "missing": missing},
             )
 
+        RequestIdFilter.set_account(account)
         return User(account=account, scopes=scopes)
 
     return _dependency

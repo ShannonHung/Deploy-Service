@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextvars import ContextVar
 from typing import Awaitable, Callable
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -27,18 +28,36 @@ COORDINATION_ID_HEADER = "X-Coordination-ID"
 # Log filter — injects request_id into every log record
 # ──────────────────────────────────────────────────────────────────────────────
 
-class RequestIdFilter(logging.Filter):
-    """Logging filter that adds ``request_id``, ``username``, ``command_id``, ``host``, and ``port`` to log records."""
+_request_id_var: ContextVar[str] = ContextVar("request_id", default="N/A")
+_account_var: ContextVar[str] = ContextVar("account", default="-")
 
-    _current_request_id: str = "N/A"
+
+class RequestIdFilter(logging.Filter):
+    """Logging filter that adds ``request_id`` and ``username`` to every log record.
+
+    Values are stored in ContextVars so each asyncio coroutine (request) has
+    its own isolated copy — concurrent requests never bleed into each other's
+    log lines.
+
+    ``set_account`` is called by ``get_current_user`` after JWT validation so
+    that all log lines emitted during an authenticated request automatically
+    carry the caller's identity without each logger having to pass it manually.
+    """
+
+    @staticmethod
+    def set_request_id(value: str) -> None:
+        _request_id_var.set(value)
+
+    @staticmethod
+    def set_account(value: str) -> None:
+        _account_var.set(value)
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.request_id = self._current_request_id  # type: ignore[attr-defined]
-        # Provide defaults so the formatter never raises on missing attributes.
-        # Commands that pass extra={"username": ..., "command_id": ..., "host": ..., "port": ...}
-        # will override these; all other log lines simply show "-".
+        record.request_id = _request_id_var.get()  # type: ignore[attr-defined]
+        # ``username`` may be overridden per-call via extra={"username": ...};
+        # fall back to the request-scoped account set by the auth dependency.
         if not hasattr(record, "username"):
-            record.username = "-"  # type: ignore[attr-defined]
+            record.username = _account_var.get()  # type: ignore[attr-defined]
         if not hasattr(record, "command_id"):
             record.command_id = "-"  # type: ignore[attr-defined]
         if not hasattr(record, "host"):
@@ -83,7 +102,8 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         request_id = coordination_id or str(uuid.uuid4())
 
         request.state.request_id = request_id
-        RequestIdFilter._current_request_id = request_id
+        RequestIdFilter.set_request_id(request_id)
+        RequestIdFilter.set_account("-")
 
         response = await call_next(request)
 

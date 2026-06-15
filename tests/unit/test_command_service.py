@@ -95,3 +95,25 @@ async def test_bastion_type_defaults_to_settings_when_option_none():
     ctx = await svc._prepare_execution("test_admin", "rid", req)
     assert ctx.resolved_host.ip == "10.20.30.40"
     assert ctx.resolved_host.metadata["bastion_type"] == default_type
+
+
+async def test_bastion_type_empty_default_without_option_raises(monkeypatch):
+    """When BASTION_DEFAULT_TYPE is '' and no option.bastion_type is given,
+    _prepare_execution must raise CommandExecutionException with a clear message."""
+    import app.services.command_service as svc_module
+
+    vm = _vm("anything")
+    mapping = _mapping("type1", "10.0.0.1")
+    svc = _service_for_bastion(vm, mapping)
+
+    req = CommandExecutionRequest(
+        command_name="list_file", host="n1", host_type=HostType.BASTION,
+        port=22, username="root", ssh_config="default",
+        arguments={"key_word": "ssh"},
+    )
+
+    monkeypatch.setattr(svc_module.settings, "BASTION_DEFAULT_TYPE", "")
+    with pytest.raises(CommandExecutionException) as exc_info:
+        await svc._prepare_execution("test_admin", "rid", req)
+
+    assert "BASTION_DEFAULT_TYPE" in str(exc_info.value)

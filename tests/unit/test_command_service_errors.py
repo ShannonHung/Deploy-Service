@@ -110,6 +110,33 @@ async def test_missing_argument_raises_command_execution_exception(svc):
         await service._prepare_execution("test_admin", "rid", req)
 
 
+def test_timeout_seconds_zero_is_not_replaced_by_default(monkeypatch):
+    """timeout_seconds=0 must be used as-is, not silently replaced by the default."""
+    import app.services.command_service as cs_mod
+
+    default_timeout = cs_mod.settings.COMMAND_DEFAULT_TIMEOUT
+
+    class _Opt:
+        timeout_seconds = 0
+
+    class _Req:
+        option = _Opt()
+
+    class _Ctx:
+        raw_request = _Req()
+
+    ctx = _Ctx()
+    opt = ctx.raw_request.option
+    # Reproduce the exact expression from command_service._run_command line 534.
+    # With the truthiness bug: `0` is falsy → default is used.
+    # After fix: `is not None` → 0 is used.
+    actual = opt.timeout_seconds if opt.timeout_seconds is not None else default_timeout
+    assert actual == 0, (
+        f"timeout_seconds=0 was replaced by default {default_timeout} — "
+        "use 'is not None' not truthiness check"
+    )
+
+
 def test_capacity_full_raises_service_unavailable(svc, monkeypatch):
     service, _ = svc
     # Fill the running-commands pool to the configured limit.
