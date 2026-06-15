@@ -24,12 +24,13 @@ def _make_repo() -> GitlabPipelineRepository:
     )
 
 
-def _make_project_with_bridges(bridges: list) -> MagicMock:
-    """Return a mocked python-gitlab project whose pipelines.get(<id>).bridges.list()
-    returns the given list of bridge objects."""
-    project = MagicMock()
-    project.pipelines.get.return_value.bridges.list.return_value = bridges
-    return project
+def _make_pipeline_mock(bridges: list = (), jobs: list = (), variables: list = ()) -> MagicMock:
+    """Return a mocked python-gitlab Pipeline object with sub-resource lists."""
+    pipeline = MagicMock()
+    pipeline.bridges.list.return_value = list(bridges)
+    pipeline.jobs.list.return_value = list(jobs)
+    pipeline.variables.list.return_value = list(variables)
+    return pipeline
 
 
 def test_collect_downstream_pipelines_returns_fired_bridges():
@@ -42,10 +43,10 @@ def test_collect_downstream_pipelines_returns_fired_bridges():
             "project_id": 42,
         },
     )
-    project = _make_project_with_bridges([bridge])
+    pipeline = _make_pipeline_mock(bridges=[bridge])
     repo = _make_repo()
 
-    result = repo._collect_downstream_pipelines(project, pipeline_id=1)
+    result = repo._collect_downstream_pipelines(pipeline, pipeline_id=1)
 
     assert len(result) == 1
     entry = result[0]
@@ -70,10 +71,10 @@ def test_collect_downstream_pipelines_skips_bridges_without_downstream():
         name="trigger:deploy-staging",
         downstream_pipeline=None,
     )
-    project = _make_project_with_bridges([fired, pending])
+    pipeline = _make_pipeline_mock(bridges=[fired, pending])
     repo = _make_repo()
 
-    result = repo._collect_downstream_pipelines(project, pipeline_id=1)
+    result = repo._collect_downstream_pipelines(pipeline, pipeline_id=1)
 
     assert len(result) == 1
     assert result[0].id == 101
@@ -92,22 +93,20 @@ def test_collect_downstream_pipelines_preserves_cross_project_id():
             "project_id": 7777,
         },
     )
-    project = _make_project_with_bridges([bridge])
-    repo = _make_repo()  # parent project_id=1
+    pipeline = _make_pipeline_mock(bridges=[bridge])
+    repo = _make_repo()
 
-    result = repo._collect_downstream_pipelines(project, pipeline_id=1)
+    result = repo._collect_downstream_pipelines(pipeline, pipeline_id=1)
 
     assert result[0].project_id == 7777
 
 
 def test_collect_downstream_pipelines_returns_empty_on_gitlab_error():
-    project = MagicMock()
-    project.pipelines.get.return_value.bridges.list.side_effect = (
-        gitlab.exceptions.GitlabListError("boom")
-    )
+    pipeline = MagicMock()
+    pipeline.bridges.list.side_effect = gitlab.exceptions.GitlabListError("boom")
     repo = _make_repo()
 
-    result = repo._collect_downstream_pipelines(project, pipeline_id=1)
+    result = repo._collect_downstream_pipelines(pipeline, pipeline_id=1)
 
     assert result == []
 
@@ -123,25 +122,18 @@ def test_to_pipeline_data_includes_downstream_pipelines():
             "project_id": 42,
         },
     )
-    project = MagicMock()
-    # jobs/variables/tags are best-effort — let them return empty lists
-    project.pipelines.get.return_value.jobs.list.return_value = []
-    project.pipelines.get.return_value.variables.list.return_value = []
-    project.pipelines.get.return_value.bridges.list.return_value = [bridge]
-
-    pipeline_obj = SimpleNamespace(
-        id=1,
-        status="running",
-        created_at="2026-05-16T00:00:00Z",
-        updated_at="2026-05-16T00:00:00Z",
-        started_at=None,
-        finished_at=None,
-        ref="main",
-        web_url="http://gitlab.example/-/pipelines/1",
-    )
+    pipeline = _make_pipeline_mock(bridges=[bridge])
+    pipeline.id = 1
+    pipeline.status = "running"
+    pipeline.created_at = "2026-05-16T00:00:00Z"
+    pipeline.updated_at = "2026-05-16T00:00:00Z"
+    pipeline.started_at = None
+    pipeline.finished_at = None
+    pipeline.ref = "main"
+    pipeline.web_url = "http://gitlab.example/-/pipelines/1"
 
     repo = _make_repo()
-    data = repo._to_pipeline_data(pipeline_obj, project)
+    data = repo._to_pipeline_data(pipeline)
 
     assert len(data.downstream_pipelines) == 1
     assert data.downstream_pipelines[0].id == 999
