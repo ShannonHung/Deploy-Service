@@ -9,6 +9,7 @@ CommandService does not need to change.
 
 from __future__ import annotations
 
+import logging
 import re
 from abc import ABC, abstractmethod
 from typing import Dict, Optional
@@ -20,6 +21,8 @@ from app.domain.command import HostType
 from app.repositories.bastion_mapping_repository import BastionMappingRepository
 from app.repositories.inventory_repository import InventoryRepository
 from app.repositories.vm_repository import VmRepository
+
+_logger = logging.getLogger(__name__)
 
 
 class ResolvedHost(BaseModel):
@@ -72,7 +75,16 @@ class ClusterBastionHostResolver(HostResolver):
 
         for mapping in mappings:
             for pattern in mapping.pattern:
-                if re.fullmatch(pattern, cluster_name):
+                try:
+                    matched = re.fullmatch(pattern, cluster_name)
+                except re.error:
+                    _logger.warning(
+                        "Skipping invalid regex pattern %r in bastion mapping "
+                        "(type=%s) — fix the mapping API data",
+                        pattern, self._bastion_type,
+                    )
+                    continue
+                if matched:
                     return ResolvedHost(
                         ip=mapping.bastion_ip,
                         source_input=raw_host,

@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from app.core.exceptions import NotFoundException
@@ -93,3 +95,18 @@ def test_factory_returns_correct_resolver_class():
 def test_factory_bastion_missing_deps_raises():
     with pytest.raises(ValueError):
         create_host_resolver(HostType.BASTION)
+
+
+async def test_malformed_pattern_raises_not_found_not_500():
+    """A syntactically invalid regex from the mapping API must not crash the request."""
+    mapping_repo = InMemoryBastionMappingRepository({
+        "type1": [
+            BastionMapping(
+                pattern=["type1-cluster-(unclosed"],  # invalid regex
+                runner="r", bastion="b", bastion_ip="10.0.0.1",
+            )
+        ]
+    })
+    resolver = ClusterBastionHostResolver(_vm_repo(), mapping_repo, "type1")
+    with pytest.raises(NotFoundException):
+        await resolver.resolve("node1")
