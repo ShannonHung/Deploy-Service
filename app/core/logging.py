@@ -28,17 +28,22 @@ COORDINATION_ID_HEADER = "X-Coordination-ID"
 # ──────────────────────────────────────────────────────────────────────────────
 
 class RequestIdFilter(logging.Filter):
-    """Logging filter that adds ``request_id``, ``username``, ``command_id``, ``host``, and ``port`` to log records."""
+    """Logging filter that adds ``request_id`` and ``username`` to every log record.
+
+    ``_current_account`` is set by ``get_current_user`` after JWT validation so
+    that all log lines emitted during an authenticated request automatically
+    carry the caller's identity without each logger having to pass it manually.
+    """
 
     _current_request_id: str = "N/A"
+    _current_account: str = "-"
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = self._current_request_id  # type: ignore[attr-defined]
-        # Provide defaults so the formatter never raises on missing attributes.
-        # Commands that pass extra={"username": ..., "command_id": ..., "host": ..., "port": ...}
-        # will override these; all other log lines simply show "-".
+        # ``username`` may be overridden per-call via extra={"username": ...};
+        # fall back to the request-scoped account set by the auth dependency.
         if not hasattr(record, "username"):
-            record.username = "-"  # type: ignore[attr-defined]
+            record.username = self._current_account  # type: ignore[attr-defined]
         if not hasattr(record, "command_id"):
             record.command_id = "-"  # type: ignore[attr-defined]
         if not hasattr(record, "host"):
@@ -84,8 +89,15 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
 
         request.state.request_id = request_id
         RequestIdFilter._current_request_id = request_id
+        RequestIdFilter._current_account = "-"
 
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        finally:
+            # Reset per-request state so it never bleeds into the next request
+            # on the same thread/task.
+            RequestIdFilter._current_request_id = "N/A"
+            RequestIdFilter._current_account = "-"
 
         if from_client:
             # Echo back only when the client explicitly provided the header
