@@ -66,4 +66,5 @@ def _ssh_default_fixture():
 def client() -> TestClient:
     """TestClient backed by the full app with test settings."""
     app = create_app()
-    return TestClient(app)
+    with TestClient(app) as c:
+        yield c
