@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextvars import ContextVar
 from typing import Awaitable, Callable
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -27,23 +28,36 @@ COORDINATION_ID_HEADER = "X-Coordination-ID"
 # Log filter — injects request_id into every log record
 # ──────────────────────────────────────────────────────────────────────────────
 
+_request_id_var: ContextVar[str] = ContextVar("request_id", default="N/A")
+_account_var: ContextVar[str] = ContextVar("account", default="-")
+
+
 class RequestIdFilter(logging.Filter):
     """Logging filter that adds ``request_id`` and ``username`` to every log record.
 
-    ``_current_account`` is set by ``get_current_user`` after JWT validation so
+    Values are stored in ContextVars so each asyncio coroutine (request) has
+    its own isolated copy — concurrent requests never bleed into each other's
+    log lines.
+
+    ``set_account`` is called by ``get_current_user`` after JWT validation so
     that all log lines emitted during an authenticated request automatically
     carry the caller's identity without each logger having to pass it manually.
     """
 
-    _current_request_id: str = "N/A"
-    _current_account: str = "-"
+    @staticmethod
+    def set_request_id(value: str) -> None:
+        _request_id_var.set(value)
+
+    @staticmethod
+    def set_account(value: str) -> None:
+        _account_var.set(value)
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.request_id = self._current_request_id  # type: ignore[attr-defined]
+        record.request_id = _request_id_var.get()  # type: ignore[attr-defined]
         # ``username`` may be overridden per-call via extra={"username": ...};
         # fall back to the request-scoped account set by the auth dependency.
         if not hasattr(record, "username"):
-            record.username = self._current_account  # type: ignore[attr-defined]
+            record.username = _account_var.get()  # type: ignore[attr-defined]
         if not hasattr(record, "command_id"):
             record.command_id = "-"  # type: ignore[attr-defined]
         if not hasattr(record, "host"):
@@ -88,16 +102,10 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         request_id = coordination_id or str(uuid.uuid4())
 
         request.state.request_id = request_id
-        RequestIdFilter._current_request_id = request_id
-        RequestIdFilter._current_account = "-"
+        RequestIdFilter.set_request_id(request_id)
+        RequestIdFilter.set_account("-")
 
-        try:
-            response = await call_next(request)
-        finally:
-            # Reset per-request state so it never bleeds into the next request
-            # on the same thread/task.
-            RequestIdFilter._current_request_id = "N/A"
-            RequestIdFilter._current_account = "-"
+        response = await call_next(request)
 
         if from_client:
             # Echo back only when the client explicitly provided the header

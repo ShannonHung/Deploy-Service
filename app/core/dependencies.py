@@ -59,7 +59,7 @@ def get_current_user(required_scopes: list[str] | None = None) -> Callable:
                 detail={"required": required, "missing": missing},
             )
 
-        RequestIdFilter._current_account = account
+        RequestIdFilter.set_account(account)
         return User(account=account, scopes=scopes)
 
     return _dependency
