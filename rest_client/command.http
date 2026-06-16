@@ -99,6 +99,46 @@ Content-Type: application/json
 }
 
 
+### Execute whoami via Bastion (bastion_type auto-derived from BASTION_NODE_TYPE_MAP)
+# @name my_command
+POST {{base_url}}/api/v1/command/execution
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "command_name": "whoami",
+    "host": "node-001",
+    "host_type": "bastion",
+    "port": 22,
+    "username": "root",
+    "ssh_config": "cluster1",
+    "option": {
+        "timeout_seconds": 30
+    },
+    "arguments": {}
+}
+
+### Execute whoami via Bastion (bastion_type explicitly set, overrides BASTION_NODE_TYPE_MAP)
+# @name my_command
+POST {{base_url}}/api/v1/command/execution
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "command_name": "whoami",
+    "host": "node-001",
+    "host_type": "bastion",
+    "port": 22,
+    "username": "root",
+    "ssh_config": "cluster1",
+    "option": {
+        "timeout_seconds": 30,
+        "bastion_type": "type1"
+    },
+    "arguments": {}
+}
+
+
 ### Poll Execution Status
 @my_command_id = {{my_command.response.body.data.command_id}}
 
