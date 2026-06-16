@@ -1,4 +1,4 @@
-"""In-memory VmRepository + BastionMappingRepository for tests."""
+"""In-memory ClusterNodeLookupRepository + BastionMappingRepository for tests."""
 
 from typing import Dict, List
 
@@ -7,18 +7,21 @@ from app.repositories.bastion_mapping_repository import (
     BastionMapping,
     BastionMappingRepository,
 )
-from app.repositories.vm_repository import VmInfo, VmRepository
+from app.repositories.cluster_node_lookup_repository import (
+    ClusterNodeInfo,
+    ClusterNodeLookupRepository,
+)
 
 
-class InMemoryVmRepository(VmRepository):
-    def __init__(self, records: Dict[str, VmInfo]):
+class InMemoryClusterNodeLookupRepository(ClusterNodeLookupRepository):
+    def __init__(self, records: Dict[str, ClusterNodeInfo]):
         self._records = records
 
-    async def lookup_by_name(self, node_name: str) -> VmInfo:
+    async def lookup_by_name(self, node_name: str) -> ClusterNodeInfo:
         info = self._records.get(node_name)
         if info is None:
             raise NotFoundException(
-                f"VM '{node_name}' not found.",
+                f"Node '{node_name}' not found.",
                 detail={"node_name": node_name},
             )
         return info

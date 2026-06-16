@@ -10,23 +10,24 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
+import app.services.command_service as svc_module
 from app.core.dependencies import (
     get_bastion_mapping_repository,
+    get_cluster_node_lookup_repository,
     get_command_state_repository,
     get_inventory_repository,
-    get_vm_repository,
 )
 from app.main import create_app
 from app.repositories.bastion_mapping_repository import BastionMapping
+from app.repositories.cluster_node_lookup_repository import ClusterNodeInfo, ClusterRef
 from app.repositories.inventory_repository import (
     InventoryBastion,
     InventoryHostInfo,
     InventoryRepository,
 )
-from app.repositories.vm_repository import VmInfo, VmK8sCluster
 from tests.fixtures.cluster import (
     InMemoryBastionMappingRepository,
-    InMemoryVmRepository,
+    InMemoryClusterNodeLookupRepository,
 )
 from tests.fixtures.inventory import InMemoryInventoryRepository
 
@@ -161,14 +162,15 @@ def test_host_type_hostname_connects_to_resolved_ip(client_with_inventory):
 
 
 @pytest.fixture
-def client_with_bastion(inventory):
-    """TestClient with inventory, vm, and bastion-mapping repos all overridden."""
+def client_with_bastion(inventory, monkeypatch):
+    """TestClient with inventory, cluster-node-lookup, and bastion-mapping repos all overridden."""
+    monkeypatch.setattr(svc_module.settings, "BASTION_NODE_TYPE_MAP", {"baremetal": "type1"})
     app = create_app()
     state_repo = _InMemoryCommandStateRepo()
-    vm_repo = InMemoryVmRepository({
-        "node1": VmInfo(
-            id=1, name="node1",
-            k8s_cluster=VmK8sCluster(id=1, name="type1-cluster-c1"),
+    cluster_node_lookup_repo = InMemoryClusterNodeLookupRepository({
+        "node1": ClusterNodeInfo(
+            node_type="baremetal", node_name="node1",
+            cluster=ClusterRef(id="1", name="type1-cluster-c1"),
         ),
     })
     mapping_repo = InMemoryBastionMappingRepository({
@@ -182,7 +184,7 @@ def client_with_bastion(inventory):
     })
     app.dependency_overrides[get_inventory_repository] = lambda: inventory
     app.dependency_overrides[get_command_state_repository] = lambda: state_repo
-    app.dependency_overrides[get_vm_repository] = lambda: vm_repo
+    app.dependency_overrides[get_cluster_node_lookup_repository] = lambda: cluster_node_lookup_repo
     app.dependency_overrides[get_bastion_mapping_repository] = lambda: mapping_repo
     with TestClient(app) as c:
         yield c

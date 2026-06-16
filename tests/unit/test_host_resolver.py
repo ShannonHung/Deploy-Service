@@ -5,6 +5,7 @@ import pytest
 from app.core.exceptions import NotFoundException
 from app.domain.command import HostType
 from app.repositories.bastion_mapping_repository import BastionMapping
+from app.repositories.cluster_node_lookup_repository import ClusterNodeInfo, ClusterRef
 from app.repositories.host_resolver import (
     ClusterBastionHostResolver,
     HostnameHostResolver,
@@ -16,10 +17,9 @@ from app.repositories.inventory_repository import (
     InventoryBastion,
     InventoryHostInfo,
 )
-from app.repositories.vm_repository import VmInfo, VmK8sCluster
 from tests.fixtures.cluster import (
     InMemoryBastionMappingRepository,
-    InMemoryVmRepository,
+    InMemoryClusterNodeLookupRepository,
 )
 from tests.fixtures.inventory import InMemoryInventoryRepository
 
@@ -33,11 +33,15 @@ def _inventory():
     })
 
 
-def _vm_repo():
-    return InMemoryVmRepository({
-        "node1": VmInfo(
-            id=1, name="node1",
-            k8s_cluster=VmK8sCluster(id=1, name="type1-cluster-c1"),
+_NODE_TYPE_MAP = {"baremetal": "type1"}
+
+
+def _cluster_node_lookup_repo():
+    return InMemoryClusterNodeLookupRepository({
+        "node1": ClusterNodeInfo(
+            node_type="baremetal",
+            node_name="node1",
+            cluster=ClusterRef(id="1", name="type1-cluster-c1"),
         ),
     })
 
@@ -84,15 +88,15 @@ def test_factory_returns_correct_resolver_class():
     assert isinstance(
         create_host_resolver(
             HostType.BASTION,
-            vm_repo=_vm_repo(),
+            cluster_node_lookup_repo=_cluster_node_lookup_repo(),
             mapping_repo=_mapping_repo(),
-            bastion_type="type1",
+            node_type_map=_NODE_TYPE_MAP,
         ),
         ClusterBastionHostResolver,
     )
 
 
-def test_factory_bastion_missing_deps_raises():
+def test_factory_bastion_missing_node_type_map_raises():
     with pytest.raises(ValueError):
         create_host_resolver(HostType.BASTION)
 
@@ -107,6 +111,8 @@ async def test_malformed_pattern_raises_not_found_not_500():
             )
         ]
     })
-    resolver = ClusterBastionHostResolver(_vm_repo(), mapping_repo, "type1")
+    resolver = ClusterBastionHostResolver(
+        _cluster_node_lookup_repo(), mapping_repo, node_type_map=_NODE_TYPE_MAP
+    )
     with pytest.raises(NotFoundException):
         await resolver.resolve("node1")
