@@ -70,9 +70,9 @@ from app.repositories.inventory_repository import (
     HttpInventoryRepository,
     InventoryRepository,
 )
-from app.repositories.vm_repository import (
-    HttpVmRepository,
-    VmRepository,
+from app.repositories.cluster_node_lookup_repository import (
+    HttpClusterNodeLookupRepository,
+    ClusterNodeLookupRepository,
 )
 from app.repositories.bastion_mapping_repository import (
     HttpBastionMappingRepository,
@@ -99,9 +99,9 @@ async def get_inventory_repository() -> InventoryRepository:
     )
 
 
-async def get_vm_repository() -> VmRepository:
+async def get_cluster_node_lookup_repository() -> ClusterNodeLookupRepository:
     s = get_settings()
-    return HttpVmRepository(
+    return HttpClusterNodeLookupRepository(
         base_url=s.CLUSTER_API_URL,
         token=s.CLUSTER_API_TOKEN,
         timeout_seconds=s.CLUSTER_API_TIMEOUT_SECONDS,
@@ -120,10 +120,10 @@ async def get_bastion_mapping_repository() -> BastionMappingRepository:
 async def get_command_service(
     repo: CommandStateRepository = Depends(get_command_state_repository),
     inventory: InventoryRepository = Depends(get_inventory_repository),
-    vm_repo: VmRepository = Depends(get_vm_repository),
+    cluster_node_lookup_repo: ClusterNodeLookupRepository = Depends(get_cluster_node_lookup_repository),
     mapping_repo: BastionMappingRepository = Depends(get_bastion_mapping_repository),
 ) -> CommandService:
-    return CommandService(repo, inventory, vm_repo, mapping_repo)
+    return CommandService(repo, inventory, cluster_node_lookup_repo, mapping_repo)
 
 
 async def get_trace_cache_repository() -> TraceCacheRepository:

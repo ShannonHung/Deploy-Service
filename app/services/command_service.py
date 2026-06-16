@@ -21,7 +21,7 @@ from app.repositories.ssh_auth_repository import create_authenticator
 from app.repositories.command_state_repository import CommandStateRepository
 from app.repositories.inventory_repository import InventoryRepository
 from app.repositories.bastion_mapping_repository import BastionMappingRepository
-from app.repositories.vm_repository import VmRepository
+from app.repositories.cluster_node_lookup_repository import ClusterNodeLookupRepository
 from app.repositories.host_resolver import ResolvedHost, create_host_resolver
 from app.core.exceptions import (
     CommandExecutionException,
@@ -53,12 +53,12 @@ class CommandService:
         self,
         repo: CommandStateRepository,
         inventory: Optional[InventoryRepository],
-        vm_repo: Optional[VmRepository] = None,
+        cluster_node_lookup_repo: Optional[ClusterNodeLookupRepository] = None,
         mapping_repo: Optional[BastionMappingRepository] = None,
     ):
         self.repo = repo
         self.inventory = inventory
-        self.vm_repo = vm_repo
+        self.cluster_node_lookup_repo = cluster_node_lookup_repo
         self.mapping_repo = mapping_repo
 
     def _validate_anti_injection(self, user_input: str):
@@ -180,18 +180,14 @@ class CommandService:
         bastion_type = (
             req.option.bastion_type
             if req.option and req.option.bastion_type
-            else settings.BASTION_DEFAULT_TYPE
+            else None
         )
-        if not bastion_type:
-            raise CommandExecutionException(
-                "No bastion type specified and BASTION_DEFAULT_TYPE is not configured. "
-                "Set BASTION_DEFAULT_TYPE in your environment or pass option.bastion_type in the request.",
-            )
         resolver = create_host_resolver(
             req.host_type,
             inventory=self.inventory,
-            vm_repo=self.vm_repo,
+            cluster_node_lookup_repo=self.cluster_node_lookup_repo,
             mapping_repo=self.mapping_repo,
+            node_type_map=settings.BASTION_NODE_TYPE_MAP,
             bastion_type=bastion_type,
         )
         resolved = await resolver.resolve(req.host)

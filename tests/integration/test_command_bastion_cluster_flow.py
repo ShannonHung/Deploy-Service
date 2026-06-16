@@ -1,22 +1,21 @@
-"""End-to-end tests for the host_type=bastion → vm → mapping resolution."""
-
-from unittest.mock import AsyncMock, MagicMock, patch
+"""End-to-end tests for the host_type=bastion → cluster-node-lookup → mapping resolution."""
 
 import pytest
 from fastapi.testclient import TestClient
 
+import app.services.command_service as svc_module
 from app.core.dependencies import (
     get_bastion_mapping_repository,
+    get_cluster_node_lookup_repository,
     get_command_state_repository,
     get_inventory_repository,
-    get_vm_repository,
 )
 from app.main import create_app
 from app.repositories.bastion_mapping_repository import BastionMapping
-from app.repositories.vm_repository import VmInfo, VmK8sCluster
+from app.repositories.cluster_node_lookup_repository import ClusterNodeInfo, ClusterRef
 from tests.fixtures.cluster import (
     InMemoryBastionMappingRepository,
-    InMemoryVmRepository,
+    InMemoryClusterNodeLookupRepository,
 )
 from tests.fixtures.inventory import InMemoryInventoryRepository
 from tests.integration.test_command_host_type import (
@@ -26,14 +25,21 @@ from tests.integration.test_command_host_type import (
 )
 
 
-def _vm_repo():
-    return InMemoryVmRepository({
-        "node1": VmInfo(id=1, name="node1",
-                        k8s_cluster=VmK8sCluster(id=1, name="type1-cluster-c1")),
-        "node2": VmInfo(id=2, name="node2",
-                        k8s_cluster=VmK8sCluster(id=2, name="type2-cluster-c1")),
-        "node3": VmInfo(id=3, name="node3",
-                        k8s_cluster=VmK8sCluster(id=3, name="orphan-cluster")),
+def _cluster_node_lookup_repo():
+    return InMemoryClusterNodeLookupRepository({
+        "node1": ClusterNodeInfo(
+            node_type="baremetal", node_name="node1",
+            cluster=ClusterRef(id="1", name="type1-cluster-c1"),
+        ),
+        "node2": ClusterNodeInfo(
+            # virtual-machine → maps to type2 via BASTION_NODE_TYPE_MAP
+            node_type="virtual-machine", node_name="node2",
+            cluster=ClusterRef(id="2", name="type2-cluster-c1"),
+        ),
+        "node3": ClusterNodeInfo(
+            node_type="baremetal", node_name="node3",
+            cluster=ClusterRef(id="3", name="orphan-cluster"),
+        ),
     })
 
 
@@ -59,11 +65,16 @@ def _mapping_repo():
 
 
 @pytest.fixture
-def client_full():
+def client_full(monkeypatch):
+    monkeypatch.setattr(
+        svc_module.settings,
+        "BASTION_NODE_TYPE_MAP",
+        {"baremetal": "type1", "virtual-machine": "type2"},
+    )
     app = create_app()
     app.dependency_overrides[get_command_state_repository] = lambda: _InMemoryCommandStateRepo()
     app.dependency_overrides[get_inventory_repository] = lambda: InMemoryInventoryRepository({})
-    app.dependency_overrides[get_vm_repository] = lambda: _vm_repo()
+    app.dependency_overrides[get_cluster_node_lookup_repository] = lambda: _cluster_node_lookup_repo()
     app.dependency_overrides[get_bastion_mapping_repository] = lambda: _mapping_repo()
     with TestClient(app) as c:
         yield c
@@ -89,7 +100,8 @@ def _post(client, *, host, option=None):
     )
 
 
-def test_default_bastion_type_used_when_option_omitted(client_full):
+def test_node_type_map_selects_bastion_automatically(client_full):
+    """baremetal node → BASTION_NODE_TYPE_MAP picks type1 → connects to type1 bastion IP."""
     p, _ = _patch_asyncssh()
     with p as mock_connect:
         resp = _post(client_full, host="node1")
@@ -97,7 +109,17 @@ def test_default_bastion_type_used_when_option_omitted(client_full):
         assert mock_connect.call_args.kwargs["host"] == "10.1.1.1"
 
 
-def test_explicit_bastion_type_overrides_default(client_full):
+def test_node_type_map_selects_different_type_for_virtual_machine(client_full):
+    """virtual-machine node → BASTION_NODE_TYPE_MAP picks type2 → connects to type2 bastion IP."""
+    p, _ = _patch_asyncssh()
+    with p as mock_connect:
+        resp = _post(client_full, host="node2")
+        assert resp.status_code == 200, resp.text
+        assert mock_connect.call_args.kwargs["host"] == "10.2.2.2"
+
+
+def test_explicit_bastion_type_in_option_overrides_node_type_map(client_full):
+    """bastion_type in option overrides node_type_map; node1 (baremetal→type1) forced to type2."""
     p, _ = _patch_asyncssh()
     with p as mock_connect:
         resp = _post(
@@ -108,7 +130,7 @@ def test_explicit_bastion_type_overrides_default(client_full):
         assert mock_connect.call_args.kwargs["host"] == "10.2.2.2"
 
 
-def test_unknown_bastion_type_returns_404(client_full):
+def test_unknown_bastion_type_in_option_returns_404(client_full):
     resp = _post(
         client_full, host="node1",
         option={"timeout_seconds": 30, "bastion_type": "no-such-type"},

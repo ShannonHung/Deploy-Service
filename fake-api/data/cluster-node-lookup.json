@@ -1,0 +1,8 @@
+{
+  "node_type": "baremetal",
+  "node_name": "node1",
+  "cluster": {
+    "id": "123",
+    "name": "type1-cluster-c1"
+  }
+}
