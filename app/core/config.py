@@ -10,9 +10,10 @@ The active environment is selected by the APP_ENV environment variable:
 
 from __future__ import annotations
 
+import json
 import os
 from functools import lru_cache
-from typing import Literal
+from typing import Dict, Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -74,7 +75,9 @@ class Settings(BaseSettings):
     CLUSTER_API_URL: str = "http://localhost:9001"
     CLUSTER_API_TOKEN: str = "fake-cluster-token"
     CLUSTER_API_TIMEOUT_SECONDS: float = 5.0
-    BASTION_DEFAULT_TYPE: str = ""
+    # JSON string mapping node_type → bastion_type, e.g.:
+    # BASTION_NODE_TYPE_MAP='{"baremetal": "type1", "virtual-machine": "type2"}'
+    BASTION_NODE_TYPE_MAP: Dict[str, str] = {}
 
     # ── Redis ─────────────────────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"

@@ -39,11 +39,16 @@ def lookup_inventory(hostname: str, authorization: str | None = Header(default=N
     raise HTTPException(status_code=404, detail=f"Host '{hostname}' not found")
 
 
-@app.get("/api/v1/vms")
-def list_vms(name: str, authorization: str | None = Header(default=None)):
-    """Return vms matching {name}. Always 200; unknown → empty results."""
+@app.get("/api/v1/k8s-clusters/node-cluster-lookup")
+def lookup_cluster_node(node_name: str, authorization: str | None = Header(default=None)):
+    """Return cluster info for a node. 200 if found, 404 if unknown."""
     _require_auth(authorization)
-    return _read_with_fallback("vms", name)
+    specific = _DATA_DIR / f"cluster-node-lookup-{node_name}.json"
+    fallback = _DATA_DIR / "cluster-node-lookup.json"
+    if not specific.is_file() and not fallback.is_file():
+        raise HTTPException(status_code=404, detail=f"Node '{node_name}' not found")
+    target = specific if specific.is_file() else fallback
+    return json.loads(target.read_text())
 
 
 @app.get("/api/v1/bastion-cluster-mappings")

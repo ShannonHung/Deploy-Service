@@ -26,25 +26,32 @@ def _auth():
     return {"Authorization": "Bearer test"}
 
 
-def test_vms_known_node_returns_fixture(fake_app):
-    r = fake_app.get("/api/v1/vms", params={"name": "node1"}, headers=_auth())
-    assert r.status_code == 200
-    body = r.json()
-    assert body["count"] == 1
-    assert body["results"][0]["name"] == "node1"
-    assert body["results"][0]["k8s-cluster"]["name"] == "type1-cluster-c1"
-
-
-def test_vms_unknown_node_returns_empty(fake_app):
+def test_cluster_node_lookup_known_node_returns_fixture(fake_app):
     r = fake_app.get(
-        "/api/v1/vms", params={"name": "does-not-exist"}, headers=_auth()
+        "/api/v1/k8s-clusters/node-cluster-lookup",
+        params={"node_name": "node1"},
+        headers=_auth(),
     )
     assert r.status_code == 200
-    assert r.json()["results"] == []
+    body = r.json()
+    assert body["node_name"] == "node1"
+    assert body["cluster"]["name"] == "type1-cluster-c1"
 
 
-def test_vms_missing_auth_returns_401(fake_app):
-    r = fake_app.get("/api/v1/vms", params={"name": "node1"})
+def test_cluster_node_lookup_unknown_node_returns_fallback(fake_app):
+    r = fake_app.get(
+        "/api/v1/k8s-clusters/node-cluster-lookup",
+        params={"node_name": "does-not-exist"},
+        headers=_auth(),
+    )
+    # Falls back to cluster-node-lookup.json which exists
+    assert r.status_code == 200
+
+
+def test_cluster_node_lookup_missing_auth_returns_401(fake_app):
+    r = fake_app.get(
+        "/api/v1/k8s-clusters/node-cluster-lookup", params={"node_name": "node1"}
+    )
     assert r.status_code == 401
 
 

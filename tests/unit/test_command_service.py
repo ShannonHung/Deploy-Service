@@ -21,35 +21,39 @@ def test_anti_injection_fail():
 
 # ── bastion_type wiring ────────────────────────────────────────────────────
 
+import app.services.command_service as svc_module
 from unittest.mock import AsyncMock, MagicMock
 
-from app.core.config import get_settings
 from app.domain.command import (
     CommandExecutionRequest, CommandOption, HostType,
 )
 from app.repositories.bastion_mapping_repository import BastionMapping
-from app.repositories.vm_repository import VmInfo, VmK8sCluster
+from app.repositories.cluster_node_lookup_repository import ClusterNodeInfo, ClusterRef
 from tests.fixtures.cluster import (
-    InMemoryBastionMappingRepository, InMemoryVmRepository,
+    InMemoryBastionMappingRepository, InMemoryClusterNodeLookupRepository,
 )
 from tests.fixtures.inventory import InMemoryInventoryRepository
 
 
-def _service_for_bastion(vm_repo, mapping_repo):
+def _service_for_bastion(cluster_node_lookup_repo, mapping_repo):
     """Build a CommandService with minimum deps for _prepare_execution to run."""
     state_repo = MagicMock()
     state_repo.save = AsyncMock()
     return CommandService(
         repo=state_repo,
         inventory=InMemoryInventoryRepository({}),
-        vm_repo=vm_repo,
+        cluster_node_lookup_repo=cluster_node_lookup_repo,
         mapping_repo=mapping_repo,
     )
 
 
-def _vm(cluster: str) -> InMemoryVmRepository:
-    return InMemoryVmRepository({
-        "n1": VmInfo(id=1, name="n1", k8s_cluster=VmK8sCluster(id=1, name=cluster))
+def _node_lookup(cluster: str, node_type: str = "baremetal") -> InMemoryClusterNodeLookupRepository:
+    return InMemoryClusterNodeLookupRepository({
+        "n1": ClusterNodeInfo(
+            node_type=node_type,
+            node_name="n1",
+            cluster=ClusterRef(id="1", name=cluster),
+        )
     })
 
 
@@ -61,12 +65,13 @@ def _mapping(type_name: str, ip: str) -> InMemoryBastionMappingRepository:
     })
 
 
-async def test_bastion_type_explicit_in_option_is_used():
-    """When option.bastion_type='type2' is set, mapping_repo is called with 'type2'."""
-    vm = _vm("type2-cluster-x")
-    # Only 'type2' has a mapping; if the resolver asked for any other type it would 404.
+async def test_bastion_type_explicit_in_option_overrides_node_type_map(monkeypatch):
+    """When option.bastion_type='type2' is set, it overrides node_type_map lookup."""
+    monkeypatch.setattr(svc_module.settings, "BASTION_NODE_TYPE_MAP", {"baremetal": "type1"})
+    node_lookup = _node_lookup("any-cluster", node_type="baremetal")
+    # Only 'type2' has a mapping; if the resolver used node_type_map it would pick type1 and 404.
     mapping = _mapping("type2", "10.10.10.10")
-    svc = _service_for_bastion(vm, mapping)
+    svc = _service_for_bastion(node_lookup, mapping)
 
     req = CommandExecutionRequest(
         command_name="list_file", host="n1", host_type=HostType.BASTION,
@@ -79,12 +84,12 @@ async def test_bastion_type_explicit_in_option_is_used():
     assert ctx.resolved_host.metadata["bastion_type"] == "type2"
 
 
-async def test_bastion_type_defaults_to_settings_when_option_none():
-    """When option.bastion_type is None, mapping_repo is called with BASTION_DEFAULT_TYPE."""
-    default_type = get_settings().BASTION_DEFAULT_TYPE
-    vm = _vm("anything")
-    mapping = _mapping(default_type, "10.20.30.40")
-    svc = _service_for_bastion(vm, mapping)
+async def test_bastion_type_derived_from_node_type_map_when_no_option(monkeypatch):
+    """When option.bastion_type is absent, node_type is looked up in BASTION_NODE_TYPE_MAP."""
+    monkeypatch.setattr(svc_module.settings, "BASTION_NODE_TYPE_MAP", {"baremetal": "type1"})
+    node_lookup = _node_lookup("any-cluster", node_type="baremetal")
+    mapping = _mapping("type1", "10.20.30.40")
+    svc = _service_for_bastion(node_lookup, mapping)
 
     req = CommandExecutionRequest(
         command_name="list_file", host="n1", host_type=HostType.BASTION,
@@ -94,17 +99,16 @@ async def test_bastion_type_defaults_to_settings_when_option_none():
     )
     ctx = await svc._prepare_execution("test_admin", "rid", req)
     assert ctx.resolved_host.ip == "10.20.30.40"
-    assert ctx.resolved_host.metadata["bastion_type"] == default_type
+    assert ctx.resolved_host.metadata["bastion_type"] == "type1"
 
 
-async def test_bastion_type_empty_default_without_option_raises(monkeypatch):
-    """When BASTION_DEFAULT_TYPE is '' and no option.bastion_type is given,
-    _prepare_execution must raise CommandExecutionException with a clear message."""
-    import app.services.command_service as svc_module
-
-    vm = _vm("anything")
+async def test_unknown_node_type_not_in_map_raises_with_clear_message(monkeypatch):
+    """When node_type has no entry in BASTION_NODE_TYPE_MAP, raise CommandExecutionException
+    with the unknown node_type and the current map contents in the message."""
+    monkeypatch.setattr(svc_module.settings, "BASTION_NODE_TYPE_MAP", {"baremetal": "type1"})
+    node_lookup = _node_lookup("any-cluster", node_type="unknown-hw")
     mapping = _mapping("type1", "10.0.0.1")
-    svc = _service_for_bastion(vm, mapping)
+    svc = _service_for_bastion(node_lookup, mapping)
 
     req = CommandExecutionRequest(
         command_name="list_file", host="n1", host_type=HostType.BASTION,
@@ -112,8 +116,9 @@ async def test_bastion_type_empty_default_without_option_raises(monkeypatch):
         arguments={"key_word": "ssh"},
     )
 
-    monkeypatch.setattr(svc_module.settings, "BASTION_DEFAULT_TYPE", "")
     with pytest.raises(CommandExecutionException) as exc_info:
         await svc._prepare_execution("test_admin", "rid", req)
 
-    assert "BASTION_DEFAULT_TYPE" in str(exc_info.value)
+    msg = str(exc_info.value)
+    assert "unknown-hw" in msg
+    assert "baremetal" in msg
