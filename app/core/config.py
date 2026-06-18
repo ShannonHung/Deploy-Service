@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     # API calls (trigger, get, list, cancel, retry). Set high enough to
     # tolerate a slow internal GitLab instance while still being shorter than
     # any upstream ingress timeout so we return our own 504 first.
+    GITLAB_CA: str = ""
     GITLAB_HTTP_TIMEOUT_SECONDS: int = 120
     # Upper bound on a single GitLab trace fetch (asyncio-level guard).
     # Should be ≤ GITLAB_HTTP_TIMEOUT_SECONDS.
@@ -66,15 +67,10 @@ class Settings(BaseSettings):
     COMMAND_MAX_RUNNING: int = 50
     SSH_CONNECT_TIMEOUT_SECONDS: int = 30
 
-    # ── Inventory API ─────────────────────────────────────────────────────────
+    # ── Inventory API (hostname lookup, cluster node lookup, bastion mappings) ──
     INVENTORY_API_URL: str = "http://localhost:9001"
     INVENTORY_API_TOKEN: str = "fake-inventory-token"
     INVENTORY_API_TIMEOUT_SECONDS: float = 5.0
-
-    # ── Cluster / Bastion mapping API ─────────────────────────────────────────
-    CLUSTER_API_URL: str = "http://localhost:9001"
-    CLUSTER_API_TOKEN: str = "fake-cluster-token"
-    CLUSTER_API_TIMEOUT_SECONDS: float = 5.0
     # JSON string mapping node_type → bastion_type, e.g.:
     # BASTION_NODE_TYPE_MAP='{"baremetal": "type1", "virtual-machine": "type2"}'
     BASTION_NODE_TYPE_MAP: Dict[str, str] = {}
@@ -83,10 +79,15 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     COMMAND_RESULT_TTL_SECONDS: int = 86400
 
+    _APP_ENV: str = os.getenv("APP_ENV", "dev")
     model_config = SettingsConfigDict(
-        # Load order: .env (base) → .env.{APP_ENV} (env-specific overrides).
-        # Missing files are silently ignored, so a plain .env alone is enough.
-        env_file=[".env", f".env.{os.getenv('APP_ENV', 'dev')}", ".env.local"],
+        # test: only .env.test — never .env.local, so CI/test runs are isolated.
+        # other envs: .env (base) → .env.{APP_ENV} → .env.local (local overrides).
+        env_file=(
+            [".env.test"]
+            if os.getenv("APP_ENV") == "test"
+            else [".env", f".env.{os.getenv('APP_ENV', 'dev')}", ".env.local"]
+        ),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",

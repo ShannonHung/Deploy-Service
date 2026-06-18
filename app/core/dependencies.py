@@ -67,16 +67,10 @@ def get_current_user(required_scopes: list[str] | None = None) -> Callable:
 from app.core.redis_client import RedisClient
 from app.repositories.command_state_repository import CommandStateRepository
 from app.repositories.inventory_repository import (
+    BastionMappingRepository,
+    ClusterNodeLookupRepository,
     HttpInventoryRepository,
     InventoryRepository,
-)
-from app.repositories.cluster_node_lookup_repository import (
-    HttpClusterNodeLookupRepository,
-    ClusterNodeLookupRepository,
-)
-from app.repositories.bastion_mapping_repository import (
-    HttpBastionMappingRepository,
-    BastionMappingRepository,
 )
 from app.repositories.trace_cache_repository import (
     RedisTraceCache,
@@ -100,21 +94,11 @@ async def get_inventory_repository() -> InventoryRepository:
 
 
 async def get_cluster_node_lookup_repository() -> ClusterNodeLookupRepository:
-    s = get_settings()
-    return HttpClusterNodeLookupRepository(
-        base_url=s.CLUSTER_API_URL,
-        token=s.CLUSTER_API_TOKEN,
-        timeout_seconds=s.CLUSTER_API_TIMEOUT_SECONDS,
-    )
+    return await get_inventory_repository()
 
 
 async def get_bastion_mapping_repository() -> BastionMappingRepository:
-    s = get_settings()
-    return HttpBastionMappingRepository(
-        base_url=s.CLUSTER_API_URL,
-        token=s.CLUSTER_API_TOKEN,
-        timeout_seconds=s.CLUSTER_API_TIMEOUT_SECONDS,
-    )
+    return await get_inventory_repository()
 
 
 async def get_command_service(

@@ -6,16 +6,16 @@ from app.core.exceptions import (
     UpstreamTimeoutException,
     UpstreamUnavailableException,
 )
-from app.repositories.cluster_node_lookup_repository import (
+from app.repositories.inventory_repository import (
     ClusterNodeInfo,
     ClusterRef,
-    HttpClusterNodeLookupRepository,
+    HttpInventoryRepository,
 )
 
 
-def _repo(handler) -> HttpClusterNodeLookupRepository:
+def _repo(handler) -> HttpInventoryRepository:
     transport = httpx.MockTransport(handler)
-    return HttpClusterNodeLookupRepository(
+    return HttpInventoryRepository(
         base_url="http://fake",
         token="t",
         timeout_seconds=5,
@@ -27,7 +27,7 @@ async def test_lookup_success_returns_cluster_node_info():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/v1/k8s-clusters/node-cluster-lookup"
         assert dict(request.url.params) == {"node_name": "node1"}
-        assert request.headers.get("authorization") == "Bearer t"
+        assert request.headers.get("authorization") == "Token t"
         return httpx.Response(
             200,
             json={

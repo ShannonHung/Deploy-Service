@@ -39,6 +39,7 @@ help:
 .PHONY: install
 install:
 	$(UV) sync --group dev
+	$(UV) export --format requirements-txt --no-hashes -o requirements.txt
 
 .PHONY: setup-ssh-nodes
 setup-ssh-nodes:
@@ -88,9 +89,11 @@ inventory-api:
 #   CI/CD 建議：             make test-ci      ← 等同 make test，明確語意
 
 # test: 不跑 e2e（單元 + 純 integration），不需要外部依賴
+# APP_ENV=test 由 pytest-env（pyproject.toml [tool.pytest_env]）自動注入
+# -v 與 -m "not e2e" 由 addopts 自動帶入，不需要在這裡重複
 .PHONY: test
 test:
-	APP_ENV=test $(PYTEST) tests/ -v -m "not e2e"
+	$(PYTEST) tests/
 
 # test-ci: CI 專用別名，語意明確 — 等同 make test
 .PHONY: test-ci
@@ -99,7 +102,7 @@ test-ci: test
 # test-all: 跑全部，包含 e2e；需要先起 Redis + SSH nodes
 .PHONY: test-all
 test-all:
-	APP_ENV=test RUN_E2E=1 $(PYTEST) tests/ -v
+	RUN_E2E=1 $(PYTEST) tests/ -m ""
 
 # test-e2e: 只跑 e2e；需要先起 Redis + SSH nodes
 # 建議執行順序：
@@ -109,20 +112,19 @@ test-all:
 #   4. make test-e2e          ← 執行 e2e 測試
 .PHONY: test-e2e
 test-e2e:
-	APP_ENV=test RUN_E2E=1 $(PYTEST) tests/e2e/ -v
+	RUN_E2E=1 $(PYTEST) tests/e2e/ -m ""
 
 .PHONY: test-unit
 test-unit:
-	APP_ENV=test $(PYTEST) tests/unit/ -v
+	$(PYTEST) tests/unit/
 
 .PHONY: test-int
 test-int:
-	APP_ENV=test $(PYTEST) tests/integration/ -v
+	$(PYTEST) tests/integration/
 
 .PHONY: test-cov
 test-cov:
-	APP_ENV=test $(PYTEST) tests/ -v --tb=short -m "not e2e" \
-		--cov=app --cov-report=term-missing
+	$(PYTEST) tests/ --tb=short --cov=app --cov-report=term-missing
 
 # ─── Utils ───────────────────────────────────────────────────────────────────
 # 用法：make hash p=yourpassword

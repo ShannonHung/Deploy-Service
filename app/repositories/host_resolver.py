@@ -18,9 +18,11 @@ from pydantic import BaseModel, Field
 
 from app.core.exceptions import CommandExecutionException, NotFoundException
 from app.domain.command import HostType
-from app.repositories.bastion_mapping_repository import BastionMappingRepository
-from app.repositories.cluster_node_lookup_repository import ClusterNodeLookupRepository
-from app.repositories.inventory_repository import InventoryRepository
+from app.repositories.inventory_repository import (
+    BastionMappingRepository,
+    ClusterNodeLookupRepository,
+    InventoryRepository,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -94,7 +96,7 @@ class ClusterBastionHostResolver(HostResolver):
         mappings = await self._mapping_repo.list_mappings(bastion_type)
 
         for mapping in mappings:
-            for pattern in mapping.pattern:
+            for pattern in mapping.patterns:
                 try:
                     matched = re.fullmatch(pattern, cluster_name)
                 except re.error:

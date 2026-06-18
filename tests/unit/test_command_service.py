@@ -27,8 +27,8 @@ from unittest.mock import AsyncMock, MagicMock
 from app.domain.command import (
     CommandExecutionRequest, CommandOption, HostType,
 )
-from app.repositories.bastion_mapping_repository import BastionMapping
-from app.repositories.cluster_node_lookup_repository import ClusterNodeInfo, ClusterRef
+from app.repositories.inventory_repository import BastionMapping
+from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef
 from tests.fixtures.cluster import (
     InMemoryBastionMappingRepository, InMemoryClusterNodeLookupRepository,
 )
@@ -60,7 +60,7 @@ def _node_lookup(cluster: str, node_type: str = "baremetal") -> InMemoryClusterN
 def _mapping(type_name: str, ip: str) -> InMemoryBastionMappingRepository:
     return InMemoryBastionMappingRepository({
         type_name: [BastionMapping(
-            pattern=[".*"], runner="r", bastion="b", bastion_ip=ip,
+            patterns=[".*"], runner="r", bastion="b", bastion_ip=ip,
         )]
     })
 

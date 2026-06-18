@@ -65,7 +65,8 @@ class GitlabPipelineRepository(PipelineRepository):
     ) -> None:
         settings = get_settings()
         timeout = http_timeout if http_timeout is not None else settings.GITLAB_HTTP_TIMEOUT_SECONDS
-        self._gl = gitlab.Gitlab(url=url, private_token=token, timeout=timeout)
+        ssl_verify: str | bool = settings.GITLAB_CA if settings.GITLAB_CA else True
+        self._gl = gitlab.Gitlab(url=url, private_token=token, timeout=timeout, ssl_verify=ssl_verify)
         self._project_id = project_id
         self._trace_cache = trace_cache
         self._project_cache: Any = None
