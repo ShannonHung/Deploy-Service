@@ -60,7 +60,7 @@ def _node_lookup(cluster: str, node_type: str = "baremetal") -> InMemoryClusterN
 def _mapping(type_name: str, ip: str) -> InMemoryBastionMappingRepository:
     return InMemoryBastionMappingRepository({
         type_name: [BastionMapping(
-            pattern=[".*"], runner="r", bastion="b", bastion_ip=ip,
+            patterns=[".*"], runner="r", bastion="b", bastion_ip=ip,
         )]
     })
 

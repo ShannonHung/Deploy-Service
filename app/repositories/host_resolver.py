@@ -94,7 +94,7 @@ class ClusterBastionHostResolver(HostResolver):
         mappings = await self._mapping_repo.list_mappings(bastion_type)
 
         for mapping in mappings:
-            for pattern in mapping.pattern:
+            for pattern in mapping.patterns:
                 try:
                     matched = re.fullmatch(pattern, cluster_name)
                 except re.error:

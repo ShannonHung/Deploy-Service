@@ -35,13 +35,13 @@ async def test_first_pattern_in_first_entry_wins():
     mappings = {
         "type1": [
             BastionMapping(
-                pattern=["type1-cluster-(c1|c2|c3)", "type1-cluster.*"],
+                patterns=["type1-cluster-(c1|c2|c3)", "type1-cluster.*"],
                 runner="r1",
                 bastion="b1",
                 bastion_ip="10.0.0.1",
             ),
             BastionMapping(
-                pattern=["type1-kind"],
+                patterns=["type1-kind"],
                 runner="r2",
                 bastion="b2",
                 bastion_ip="10.0.0.2",
@@ -69,13 +69,13 @@ async def test_second_entry_priority_when_first_doesnt_match():
     mappings = {
         "type1": [
             BastionMapping(
-                pattern=["type1-cluster-(c1|c2|c3)"],
+                patterns=["type1-cluster-(c1|c2|c3)"],
                 runner="r1",
                 bastion="b1",
                 bastion_ip="10.0.0.1",
             ),
             BastionMapping(
-                pattern=["type1-kind"],
+                patterns=["type1-kind"],
                 runner="r2",
                 bastion="b2",
                 bastion_ip="10.0.0.2",
@@ -96,7 +96,7 @@ async def test_no_pattern_matches_raises_not_found():
     mappings = {
         "type1": [
             BastionMapping(
-                pattern=["type1-cluster-(c1|c2|c3)"],
+                patterns=["type1-cluster-(c1|c2|c3)"],
                 runner="r1",
                 bastion="b1",
                 bastion_ip="10.0.0.1",
@@ -117,7 +117,7 @@ async def test_no_pattern_matches_raises_not_found():
 
 
 async def test_node_not_found_propagates():
-    mappings = {"type1": [BastionMapping(pattern=[".*"], runner="r", bastion="b", bastion_ip="1.1.1.1")]}
+    mappings = {"type1": [BastionMapping(patterns=[".*"], runner="r", bastion="b", bastion_ip="1.1.1.1")]}
     resolver = ClusterBastionHostResolver(
         InMemoryClusterNodeLookupRepository({}),
         _mapping_repo(mappings),
@@ -132,7 +132,7 @@ async def test_fullmatch_boundary_dotstar():
     mappings = {
         "type1": [
             BastionMapping(
-                pattern=["type1-cluster.*"],
+                patterns=["type1-cluster.*"],
                 runner="r",
                 bastion="b",
                 bastion_ip="10.0.0.1",
@@ -154,7 +154,7 @@ async def test_fullmatch_boundary_strict_alternation():
     mappings = {
         "type1": [
             BastionMapping(
-                pattern=["type1-cluster-(c1|c2|c3)"],
+                patterns=["type1-cluster-(c1|c2|c3)"],
                 runner="r",
                 bastion="b",
                 bastion_ip="10.0.0.1",
@@ -181,7 +181,7 @@ async def test_fullmatch_rejects_prefix_only_match():
     mappings = {
         "type1": [
             BastionMapping(
-                pattern=["type1-cluster"],
+                patterns=["type1-cluster"],
                 runner="r",
                 bastion="b",
                 bastion_ip="10.0.0.1",
@@ -203,7 +203,7 @@ async def test_fullmatch_rejects_prefix_only_match():
 async def test_node_type_map_resolves_bastion_type_from_node_type():
     """node_type=baremetal maps to type1 via node_type_map; no explicit bastion_type needed."""
     mappings = {
-        "type1": [BastionMapping(pattern=[".*"], runner="r", bastion="b", bastion_ip="10.1.0.1")],
+        "type1": [BastionMapping(patterns=[".*"], runner="r", bastion="b", bastion_ip="10.1.0.1")],
     }
     resolver = ClusterBastionHostResolver(
         _node_lookup_repo("any-cluster", node_type="baremetal"),
@@ -218,8 +218,8 @@ async def test_node_type_map_resolves_bastion_type_from_node_type():
 async def test_node_type_map_selects_correct_type_per_node_type():
     """node_type=virtual-machine maps to type2, independently of type1 mappings."""
     mappings = {
-        "type1": [BastionMapping(pattern=[".*"], runner="r1", bastion="b1", bastion_ip="10.1.0.1")],
-        "type2": [BastionMapping(pattern=[".*"], runner="r2", bastion="b2", bastion_ip="10.2.0.2")],
+        "type1": [BastionMapping(patterns=[".*"], runner="r1", bastion="b1", bastion_ip="10.1.0.1")],
+        "type2": [BastionMapping(patterns=[".*"], runner="r2", bastion="b2", bastion_ip="10.2.0.2")],
     }
     resolver = ClusterBastionHostResolver(
         _node_lookup_repo("any-cluster", node_type="virtual-machine"),
@@ -234,8 +234,8 @@ async def test_node_type_map_selects_correct_type_per_node_type():
 async def test_bastion_type_overrides_node_type_map():
     """Explicit bastion_type takes priority over node_type_map lookup."""
     mappings = {
-        "type1": [BastionMapping(pattern=[".*"], runner="r1", bastion="b1", bastion_ip="10.1.0.1")],
-        "override-type": [BastionMapping(pattern=[".*"], runner="r2", bastion="b2", bastion_ip="10.9.9.9")],
+        "type1": [BastionMapping(patterns=[".*"], runner="r1", bastion="b1", bastion_ip="10.1.0.1")],
+        "override-type": [BastionMapping(patterns=[".*"], runner="r2", bastion="b2", bastion_ip="10.9.9.9")],
     }
     # node_type=baremetal would map to type1, but bastion_type forces override-type
     resolver = ClusterBastionHostResolver(
@@ -252,7 +252,7 @@ async def test_bastion_type_overrides_node_type_map():
 async def test_unknown_node_type_raises_with_clear_message():
     """node_type not present in map raises CommandExecutionException with node_type and map contents."""
     mappings = {
-        "type1": [BastionMapping(pattern=[".*"], runner="r", bastion="b", bastion_ip="1.1.1.1")],
+        "type1": [BastionMapping(patterns=[".*"], runner="r", bastion="b", bastion_ip="1.1.1.1")],
     }
     resolver = ClusterBastionHostResolver(
         _node_lookup_repo("any-cluster", node_type="unknown-type"),

@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     # API calls (trigger, get, list, cancel, retry). Set high enough to
     # tolerate a slow internal GitLab instance while still being shorter than
     # any upstream ingress timeout so we return our own 504 first.
+    GITLAB_CA: str = ""
     GITLAB_HTTP_TIMEOUT_SECONDS: int = 120
     # Upper bound on a single GitLab trace fetch (asyncio-level guard).
     # Should be ≤ GITLAB_HTTP_TIMEOUT_SECONDS.

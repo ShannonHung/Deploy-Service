@@ -1,13 +1,14 @@
 """Bastion-Cluster mapping API repository.
 
-GET {base_url}/api/v1/bastion-cluster-mappings?type={type_name}
+GET {base_url}/api/v1/bastion-cluster-mappings?name={type_name}
 
 Contract:
-  - 200 + non-empty results → list[BastionMapping] (priority preserved)
-  - 200 + empty results     → NotFoundException (unknown type)
-  - 200 + malformed body    → UpstreamUnavailableException
-  - timeout                 → UpstreamTimeoutException
-  - other 4xx / 5xx / net   → UpstreamUnavailableException
+  - 200 + exactly one result → list[BastionMapping] from result["data"]
+  - 200 + empty results      → NotFoundException (unknown type)
+  - 200 + multiple results   → UpstreamUnavailableException (ambiguous)
+  - 200 + malformed body     → UpstreamUnavailableException
+  - timeout                  → UpstreamTimeoutException
+  - other 4xx / 5xx / net    → UpstreamUnavailableException
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from app.core.exceptions import (
 
 
 class BastionMapping(BaseModel):
-    pattern: List[str]
+    patterns: List[str]
     runner: str
     bastion: str
     bastion_ip: str
@@ -64,7 +65,7 @@ class HttpBastionMappingRepository(BastionMappingRepository):
             async with self._client() as client:
                 resp = await client.get(
                     "/api/v1/bastion-cluster-mappings",
-                    params={"type": type_name},
+                    params={"name": type_name},
                     headers={"Authorization": f"Bearer {self._token}"},
                 )
         except httpx.TimeoutException as exc:
@@ -103,4 +104,15 @@ class HttpBastionMappingRepository(BastionMappingRepository):
                 f"No bastion mappings found for type '{type_name}'.",
                 detail={"type": type_name},
             )
-        return [BastionMapping.model_validate(item) for item in results]
+        if len(results) != 1:
+            raise UpstreamUnavailableException(
+                f"Bastion mapping API returned {len(results)} results for type '{type_name}'; expected exactly 1.",
+                detail={"type": type_name, "count": len(results)},
+            )
+        data = results[0].get("data")
+        if not isinstance(data, list):
+            raise UpstreamUnavailableException(
+                f"Bastion mapping API result missing 'data' list for type '{type_name}'.",
+                detail={"type": type_name},
+            )
+        return [BastionMapping.model_validate(item) for item in data]

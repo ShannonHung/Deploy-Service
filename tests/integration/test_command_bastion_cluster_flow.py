@@ -47,17 +47,17 @@ def _mapping_repo():
     return InMemoryBastionMappingRepository({
         "type1": [
             BastionMapping(
-                pattern=["type1-cluster-(c1|c2|c3)", "type1-cluster.*"],
+                patterns=["type1-cluster-(c1|c2|c3)", "type1-cluster.*"],
                 runner="r1", bastion="b1", bastion_ip="10.1.1.1",
             ),
             BastionMapping(
-                pattern=["type1-kind"], runner="r2", bastion="b2",
+                patterns=["type1-kind"], runner="r2", bastion="b2",
                 bastion_ip="10.1.1.2",
             ),
         ],
         "type2": [
             BastionMapping(
-                pattern=["type2-cluster.*"], runner="r3", bastion="b3",
+                patterns=["type2-cluster.*"], runner="r3", bastion="b3",
                 bastion_ip="10.2.2.2",
             ),
         ],

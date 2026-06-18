@@ -176,7 +176,7 @@ def client_with_bastion(inventory, monkeypatch):
     mapping_repo = InMemoryBastionMappingRepository({
         "type1": [
             BastionMapping(
-                pattern=["type1-cluster-(c1|c2|c3)", "type1-cluster.*"],
+                patterns=["type1-cluster-(c1|c2|c3)", "type1-cluster.*"],
                 runner="r1", bastion="bastion-type1",
                 bastion_ip="10.99.99.1",
             )

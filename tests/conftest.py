@@ -35,16 +35,27 @@ def _generate_ssh_default_fixture() -> None:
     .gitignore (committing private-key material, even fake ones, trips
     secret scanners and trains people to ignore real findings).
     """
-    with tempfile.TemporaryDirectory() as td:
-        key_path = Path(td) / "id_ed25519"
-        subprocess.run(
-            [
-                "ssh-keygen", "-t", "ed25519", "-N", "",
-                "-f", str(key_path), "-C", "test-fixture-key", "-q",
-            ],
-            check=True,
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives import serialization as _ser
+        _key = Ed25519PrivateKey.generate()
+        _pem = _key.private_bytes(
+            encoding=_ser.Encoding.PEM,
+            format=_ser.PrivateFormat.OpenSSH,
+            encryption_algorithm=_ser.NoEncryption(),
         )
-        key_b64 = base64.b64encode(key_path.read_bytes()).decode()
+        key_b64 = base64.b64encode(_pem).decode()
+    except Exception:
+        with tempfile.TemporaryDirectory() as td:
+            key_path = Path(td) / "id_ed25519"
+            subprocess.run(
+                [
+                    "ssh-keygen", "-t", "ed25519", "-N", "",
+                    "-f", str(key_path), "-C", "test-fixture-key", "-q",
+                ],
+                check=True,
+            )
+            key_b64 = base64.b64encode(key_path.read_bytes()).decode()
     _SSH_FIXTURE_PATH.write_text(json.dumps({
         "host": "localhost",
         "port": 2223,
