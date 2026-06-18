@@ -435,7 +435,7 @@ requires-dist = [
     { name = "ansi2html", specifier = ">=1.9.2" },
     { name = "asyncssh", specifier = ">=2.14.0" },
     { name = "bcrypt", specifier = ">=4.0.0" },
-    { name = "fastapi", specifier = ">=0.110.0" },
+    { name = "fastapi", specifier = ">=0.110.0,<0.137.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "prometheus-fastapi-instrumentator", specifier = ">=7.0.0" },
     { name = "pydantic-settings", specifier = ">=2.2.0" },
