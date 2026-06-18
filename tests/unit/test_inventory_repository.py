@@ -5,7 +5,9 @@ from app.core.exceptions import (
     NotFoundException, UpstreamTimeoutException, UpstreamUnavailableException,
 )
 from app.repositories.inventory_repository import (
-    HttpInventoryRepository, InventoryBastion, InventoryHostInfo,
+    HttpInventoryRepository,
+    InventoryBastion,
+    InventoryHostInfo,
 )
 
 
@@ -23,7 +25,7 @@ def _client(handler) -> HttpInventoryRepository:
 async def test_lookup_success_returns_info():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/inventory/hosts/node-a01"
-        assert request.headers.get("authorization") == "Bearer t"
+        assert request.headers.get("authorization") == "Token t"
         return httpx.Response(
             200,
             json={

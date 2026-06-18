@@ -105,7 +105,7 @@ async def trigger_pipeline(
     current_user: Annotated[User, Depends(get_current_user(["deploy_api"]))] = None,
 ) -> ApiResponse[PipelineData]:
     svc = _get_deploy_service(project_id)
-    variables = [PipelineVariable(key="TRIGGER_FROM", value=current_user.account), *body.variables]
+    variables = [PipelineVariable(key="SERVICE_FROM", value=current_user.account), *body.variables]
     data = await svc.trigger_pipeline(
         action=action,
         ref=ref_name,

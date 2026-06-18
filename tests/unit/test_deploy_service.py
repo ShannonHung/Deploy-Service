@@ -7,7 +7,7 @@ import pytest
 from app.domain.pipeline_models import PipelineData, PipelineVariable
 from app.services.deploy_service import DeployService
 
-_TRIGGER_FROM = "TRIGGER_FROM"
+_TRIGGER_FROM = "SERVICE_FROM"
 
 
 def _make_pipeline(variables: dict[str, str]) -> PipelineData:

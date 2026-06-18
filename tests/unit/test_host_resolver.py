@@ -4,8 +4,8 @@ import pytest
 
 from app.core.exceptions import NotFoundException
 from app.domain.command import HostType
-from app.repositories.bastion_mapping_repository import BastionMapping
-from app.repositories.cluster_node_lookup_repository import ClusterNodeInfo, ClusterRef
+from app.repositories.inventory_repository import BastionMapping
+from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef
 from app.repositories.host_resolver import (
     ClusterBastionHostResolver,
     HostnameHostResolver,
@@ -50,7 +50,7 @@ def _mapping_repo():
     return InMemoryBastionMappingRepository({
         "type1": [
             BastionMapping(
-                pattern=["type1-cluster.*"],
+                patterns=["type1-cluster.*"],
                 runner="r", bastion="b", bastion_ip="10.0.0.1",
             )
         ]
@@ -106,7 +106,7 @@ async def test_malformed_pattern_raises_not_found_not_500():
     mapping_repo = InMemoryBastionMappingRepository({
         "type1": [
             BastionMapping(
-                pattern=["type1-cluster-(unclosed"],  # invalid regex
+                patterns=["type1-cluster-(unclosed"],  # invalid regex
                 runner="r", bastion="b", bastion_ip="10.0.0.1",
             )
         ]
