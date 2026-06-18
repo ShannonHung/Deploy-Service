@@ -5,7 +5,9 @@ from app.core.exceptions import (
     NotFoundException, UpstreamTimeoutException, UpstreamUnavailableException,
 )
 from app.repositories.inventory_repository import (
-    HttpInventoryRepository, InventoryBastion, InventoryHostInfo,
+    HttpInventoryRepository,
+    InventoryBastion,
+    InventoryHostInfo,
 )
 
 

@@ -3,11 +3,9 @@
 from typing import Dict, List
 
 from app.core.exceptions import NotFoundException
-from app.repositories.bastion_mapping_repository import (
+from app.repositories.inventory_repository import (
     BastionMapping,
     BastionMappingRepository,
-)
-from app.repositories.cluster_node_lookup_repository import (
     ClusterNodeInfo,
     ClusterNodeLookupRepository,
 )

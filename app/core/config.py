@@ -67,15 +67,10 @@ class Settings(BaseSettings):
     COMMAND_MAX_RUNNING: int = 50
     SSH_CONNECT_TIMEOUT_SECONDS: int = 30
 
-    # ── Inventory API ─────────────────────────────────────────────────────────
+    # ── Inventory API (hostname lookup, cluster node lookup, bastion mappings) ──
     INVENTORY_API_URL: str = "http://localhost:9001"
     INVENTORY_API_TOKEN: str = "fake-inventory-token"
     INVENTORY_API_TIMEOUT_SECONDS: float = 5.0
-
-    # ── Cluster / Bastion mapping API ─────────────────────────────────────────
-    CLUSTER_API_URL: str = "http://localhost:9001"
-    CLUSTER_API_TOKEN: str = "fake-cluster-token"
-    CLUSTER_API_TIMEOUT_SECONDS: float = 5.0
     # JSON string mapping node_type → bastion_type, e.g.:
     # BASTION_NODE_TYPE_MAP='{"baremetal": "type1", "virtual-machine": "type2"}'
     BASTION_NODE_TYPE_MAP: Dict[str, str] = {}

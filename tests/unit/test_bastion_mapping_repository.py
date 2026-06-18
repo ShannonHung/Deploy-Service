@@ -6,15 +6,15 @@ from app.core.exceptions import (
     UpstreamTimeoutException,
     UpstreamUnavailableException,
 )
-from app.repositories.bastion_mapping_repository import (
+from app.repositories.inventory_repository import (
     BastionMapping,
-    HttpBastionMappingRepository,
+    HttpInventoryRepository,
 )
 
 
-def _repo(handler) -> HttpBastionMappingRepository:
+def _repo(handler) -> HttpInventoryRepository:
     transport = httpx.MockTransport(handler)
-    return HttpBastionMappingRepository(
+    return HttpInventoryRepository(
         base_url="http://fake",
         token="t",
         timeout_seconds=5,

@@ -4,8 +4,8 @@ import pytest
 
 from app.core.exceptions import NotFoundException
 from app.domain.command import HostType
-from app.repositories.bastion_mapping_repository import BastionMapping
-from app.repositories.cluster_node_lookup_repository import ClusterNodeInfo, ClusterRef
+from app.repositories.inventory_repository import BastionMapping
+from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef
 from app.repositories.host_resolver import (
     ClusterBastionHostResolver,
     HostnameHostResolver,

@@ -1,15 +1,24 @@
 """Inventory API repository.
 
-Defines the abstract InventoryRepository contract plus an HTTP-backed
-implementation. The repository hides httpx from the service layer and
-translates HTTP outcomes into the existing application exception
-hierarchy.
+Single HTTP client for all inventory service endpoints:
+  - GET /inventory/hosts/{hostname}
+  - GET /api/v1/k8s-clusters/node-cluster-lookup?node_name={name}
+  - GET /api/v1/bastion-cluster-mappings?name={name}
+
+Contract per endpoint:
+  - lookup_host:      200 → InventoryHostInfo; 404 → NotFoundException
+  - lookup_by_name:   200 → ClusterNodeInfo;   404 → NotFoundException
+  - list_mappings:    200 + exactly 1 result → list[BastionMapping] from result["data"]
+                      200 + 0 results → NotFoundException
+                      200 + >1 results → UpstreamUnavailableException
+  All endpoints:      timeout → UpstreamTimeoutException
+                      other 4xx/5xx/net → UpstreamUnavailableException
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import List, Optional
 
 import httpx
 from pydantic import BaseModel
@@ -20,6 +29,8 @@ from app.core.exceptions import (
     UpstreamUnavailableException,
 )
 
+
+# ── Models ────────────────────────────────────────────────────────────────────
 
 class InventoryBastion(BaseModel):
     hostname: str
@@ -32,19 +43,53 @@ class InventoryHostInfo(BaseModel):
     bastion: InventoryBastion
 
 
+class ClusterRef(BaseModel):
+    id: str
+    name: str
+
+
+class ClusterNodeInfo(BaseModel):
+    node_type: str
+    node_name: str
+    cluster: ClusterRef
+
+
+class BastionMapping(BaseModel):
+    patterns: List[str]
+    runner: str
+    bastion: str
+    bastion_ip: str
+
+
+# ── Abstract interfaces ───────────────────────────────────────────────────────
+
 class InventoryRepository(ABC):
-    """Look up an Inventory record by hostname."""
+    """Look up a host record by hostname."""
 
     @abstractmethod
     async def lookup(self, hostname: str) -> InventoryHostInfo: ...
 
 
-class HttpInventoryRepository(InventoryRepository):
-    """HTTP-backed InventoryRepository.
+class ClusterNodeLookupRepository(ABC):
+    """Look up the cluster a node belongs to."""
 
-    GET {base_url}/inventory/hosts/{hostname}
-    Header: Authorization: Bearer {token}
-    """
+    @abstractmethod
+    async def lookup_by_name(self, node_name: str) -> ClusterNodeInfo: ...
+
+
+class BastionMappingRepository(ABC):
+    """List bastion-cluster mappings for a given type."""
+
+    @abstractmethod
+    async def list_mappings(self, type_name: str) -> List[BastionMapping]: ...
+
+
+# ── HTTP implementation ───────────────────────────────────────────────────────
+
+class HttpInventoryRepository(
+    InventoryRepository, ClusterNodeLookupRepository, BastionMappingRepository
+):
+    """Single httpx client implementing all three inventory API interfaces."""
 
     def __init__(
         self,
@@ -56,7 +101,6 @@ class HttpInventoryRepository(InventoryRepository):
         self._base_url = base_url.rstrip("/")
         self._token = token
         self._timeout = timeout_seconds
-        # transport is injectable for testing (httpx.MockTransport).
         self._transport = transport
 
     def _client(self) -> httpx.AsyncClient:
@@ -65,6 +109,8 @@ class HttpInventoryRepository(InventoryRepository):
             timeout=self._timeout,
             transport=self._transport,
         )
+
+    # ── InventoryRepository ───────────────────────────────────────────────────
 
     async def lookup(self, hostname: str) -> InventoryHostInfo:
         try:
@@ -96,3 +142,112 @@ class HttpInventoryRepository(InventoryRepository):
             )
 
         return InventoryHostInfo.model_validate(resp.json())
+
+    # ── ClusterNodeLookupRepository ───────────────────────────────────────────
+
+    async def lookup_by_name(self, node_name: str) -> ClusterNodeInfo:
+        try:
+            async with self._client() as client:
+                resp = await client.get(
+                    "/api/v1/k8s-clusters/node-cluster-lookup",
+                    params={"node_name": node_name},
+                    headers={"Authorization": f"Bearer {self._token}"},
+                )
+        except httpx.TimeoutException as exc:
+            raise UpstreamTimeoutException(
+                f"Cluster node lookup for '{node_name}' timed out after {self._timeout}s.",
+                detail={"node_name": node_name},
+            ) from exc
+        except httpx.RequestError as exc:
+            raise UpstreamUnavailableException(
+                f"Cluster node lookup for '{node_name}' failed: {exc}",
+                detail={"node_name": node_name},
+            ) from exc
+
+        if resp.status_code == 404:
+            raise NotFoundException(
+                f"Node '{node_name}' not found in cluster lookup.",
+                detail={"node_name": node_name},
+            )
+        if resp.status_code >= 400:
+            raise UpstreamUnavailableException(
+                f"Cluster node lookup API returned {resp.status_code} for '{node_name}'.",
+                detail={"node_name": node_name, "status_code": resp.status_code},
+            )
+
+        try:
+            payload = resp.json()
+        except Exception:
+            raise UpstreamUnavailableException(
+                f"Cluster node lookup API returned non-JSON response for '{node_name}'.",
+                detail={"node_name": node_name},
+            )
+
+        try:
+            return ClusterNodeInfo.model_validate(payload)
+        except Exception:
+            raise UpstreamUnavailableException(
+                f"Cluster node lookup API returned unexpected payload shape for '{node_name}'.",
+                detail={"node_name": node_name},
+            )
+
+    # ── BastionMappingRepository ──────────────────────────────────────────────
+
+    async def list_mappings(self, type_name: str) -> List[BastionMapping]:
+        try:
+            async with self._client() as client:
+                resp = await client.get(
+                    "/api/v1/bastion-cluster-mappings",
+                    params={"name": type_name},
+                    headers={"Authorization": f"Bearer {self._token}"},
+                )
+        except httpx.TimeoutException as exc:
+            raise UpstreamTimeoutException(
+                f"Bastion mapping lookup for type '{type_name}' "
+                f"timed out after {self._timeout}s.",
+                detail={"type": type_name},
+            ) from exc
+        except httpx.RequestError as exc:
+            raise UpstreamUnavailableException(
+                f"Bastion mapping lookup for type '{type_name}' failed: {exc}",
+                detail={"type": type_name},
+            ) from exc
+
+        if resp.status_code >= 400:
+            raise UpstreamUnavailableException(
+                f"Bastion mapping API returned {resp.status_code} for type '{type_name}'.",
+                detail={"type": type_name, "status_code": resp.status_code},
+            )
+
+        try:
+            payload = resp.json()
+        except Exception:
+            raise UpstreamUnavailableException(
+                f"Bastion mapping API returned non-JSON response for type '{type_name}'.",
+                detail={"type": type_name},
+            )
+
+        if not isinstance(payload, dict) or "results" not in payload:
+            raise UpstreamUnavailableException(
+                f"Bastion mapping API returned unexpected payload shape for type '{type_name}'.",
+                detail={"type": type_name},
+            )
+
+        results = payload["results"]
+        if not results:
+            raise NotFoundException(
+                f"No bastion mappings found for type '{type_name}'.",
+                detail={"type": type_name},
+            )
+        if len(results) != 1:
+            raise UpstreamUnavailableException(
+                f"Bastion mapping API returned {len(results)} results for type '{type_name}'; expected exactly 1.",
+                detail={"type": type_name, "count": len(results)},
+            )
+        data = results[0].get("data")
+        if not isinstance(data, list):
+            raise UpstreamUnavailableException(
+                f"Bastion mapping API result missing 'data' list for type '{type_name}'.",
+                detail={"type": type_name},
+            )
+        return [BastionMapping.model_validate(item) for item in data]

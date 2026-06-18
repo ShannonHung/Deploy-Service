@@ -18,8 +18,8 @@ from app.core.dependencies import (
     get_inventory_repository,
 )
 from app.main import create_app
-from app.repositories.bastion_mapping_repository import BastionMapping
-from app.repositories.cluster_node_lookup_repository import ClusterNodeInfo, ClusterRef
+from app.repositories.inventory_repository import BastionMapping
+from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef
 from app.repositories.inventory_repository import (
     InventoryBastion,
     InventoryHostInfo,

@@ -58,7 +58,7 @@ def test_cluster_node_lookup_missing_auth_returns_401(fake_app):
 def test_mappings_known_type_returns_fixture(fake_app):
     r = fake_app.get(
         "/api/v1/bastion-cluster-mappings",
-        params={"type": "type1"},
+        params={"name": "type1"},
         headers=_auth(),
     )
     assert r.status_code == 200
@@ -69,7 +69,7 @@ def test_mappings_known_type_returns_fixture(fake_app):
 def test_mappings_unknown_type_returns_empty(fake_app):
     r = fake_app.get(
         "/api/v1/bastion-cluster-mappings",
-        params={"type": "does-not-exist"},
+        params={"name": "does-not-exist"},
         headers=_auth(),
     )
     assert r.status_code == 200
@@ -78,6 +78,6 @@ def test_mappings_unknown_type_returns_empty(fake_app):
 
 def test_mappings_missing_auth_returns_401(fake_app):
     r = fake_app.get(
-        "/api/v1/bastion-cluster-mappings", params={"type": "type1"}
+        "/api/v1/bastion-cluster-mappings", params={"name": "type1"}
     )
     assert r.status_code == 401

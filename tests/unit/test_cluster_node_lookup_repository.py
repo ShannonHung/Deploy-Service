@@ -6,16 +6,16 @@ from app.core.exceptions import (
     UpstreamTimeoutException,
     UpstreamUnavailableException,
 )
-from app.repositories.cluster_node_lookup_repository import (
+from app.repositories.inventory_repository import (
     ClusterNodeInfo,
     ClusterRef,
-    HttpClusterNodeLookupRepository,
+    HttpInventoryRepository,
 )
 
 
-def _repo(handler) -> HttpClusterNodeLookupRepository:
+def _repo(handler) -> HttpInventoryRepository:
     transport = httpx.MockTransport(handler)
-    return HttpClusterNodeLookupRepository(
+    return HttpInventoryRepository(
         base_url="http://fake",
         token="t",
         timeout_seconds=5,

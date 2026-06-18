@@ -53,8 +53,8 @@ def lookup_cluster_node(node_name: str, authorization: str | None = Header(defau
 
 @app.get("/api/v1/bastion-cluster-mappings")
 def list_bastion_cluster_mappings(
-    type: str, authorization: str | None = Header(default=None)
+    name: str, authorization: str | None = Header(default=None)
 ):
-    """Return bastion-cluster mappings for {type}. Always 200; unknown → empty results."""
+    """Return bastion-cluster mappings for {name}. Always 200; unknown → empty results."""
     _require_auth(authorization)
-    return _read_with_fallback("bastion-cluster-mappings", type)
+    return _read_with_fallback("bastion-cluster-mappings", name)

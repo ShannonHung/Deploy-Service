@@ -1,8 +1,8 @@
 import pytest
 
 from app.core.exceptions import CommandExecutionException, NotFoundException
-from app.repositories.bastion_mapping_repository import BastionMapping
-from app.repositories.cluster_node_lookup_repository import ClusterNodeInfo, ClusterRef
+from app.repositories.inventory_repository import BastionMapping
+from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef
 from app.repositories.host_resolver import ClusterBastionHostResolver
 from tests.fixtures.cluster import (
     InMemoryBastionMappingRepository,
