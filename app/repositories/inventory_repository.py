@@ -117,7 +117,7 @@ class HttpInventoryRepository(
             async with self._client() as client:
                 resp = await client.get(
                     f"/inventory/hosts/{hostname}",
-                    headers={"Authorization": f"Bearer {self._token}"},
+                    headers={"Authorization": f"Token {self._token}"},
                 )
         except httpx.TimeoutException as exc:
             raise UpstreamTimeoutException(
@@ -151,7 +151,7 @@ class HttpInventoryRepository(
                 resp = await client.get(
                     "/api/v1/k8s-clusters/node-cluster-lookup",
                     params={"node_name": node_name},
-                    headers={"Authorization": f"Bearer {self._token}"},
+                    headers={"Authorization": f"Token {self._token}"},
                 )
         except httpx.TimeoutException as exc:
             raise UpstreamTimeoutException(
@@ -199,7 +199,7 @@ class HttpInventoryRepository(
                 resp = await client.get(
                     "/api/v1/bastion-cluster-mappings",
                     params={"name": type_name},
-                    headers={"Authorization": f"Bearer {self._token}"},
+                    headers={"Authorization": f"Token {self._token}"},
                 )
         except httpx.TimeoutException as exc:
             raise UpstreamTimeoutException(

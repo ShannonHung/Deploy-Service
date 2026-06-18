@@ -79,10 +79,15 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     COMMAND_RESULT_TTL_SECONDS: int = 86400
 
+    _APP_ENV: str = os.getenv("APP_ENV", "dev")
     model_config = SettingsConfigDict(
-        # Load order: .env (base) → .env.{APP_ENV} (env-specific overrides).
-        # Missing files are silently ignored, so a plain .env alone is enough.
-        env_file=[".env", f".env.{os.getenv('APP_ENV', 'dev')}", ".env.local"],
+        # test: only .env.test — never .env.local, so CI/test runs are isolated.
+        # other envs: .env (base) → .env.{APP_ENV} → .env.local (local overrides).
+        env_file=(
+            [".env.test"]
+            if os.getenv("APP_ENV") == "test"
+            else [".env", f".env.{os.getenv('APP_ENV', 'dev')}", ".env.local"]
+        ),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",

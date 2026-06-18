@@ -23,7 +23,7 @@ def fake_app():
 
 
 def _auth():
-    return {"Authorization": "Bearer test"}
+    return {"Authorization": "Token test"}
 
 
 def test_cluster_node_lookup_known_node_returns_fixture(fake_app):

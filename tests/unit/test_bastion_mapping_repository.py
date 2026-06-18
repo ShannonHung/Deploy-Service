@@ -26,7 +26,7 @@ async def test_list_success_returns_mappings_in_order():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/v1/bastion-cluster-mappings"
         assert dict(request.url.params) == {"name": "type1"}
-        assert request.headers.get("authorization") == "Bearer t"
+        assert request.headers.get("authorization") == "Token t"
         return httpx.Response(
             200,
             json={
