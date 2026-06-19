@@ -155,7 +155,7 @@ def test_host_type_hostname_connects_to_resolved_ip(client_with_cluster_repo):
 
 
 @pytest.fixture
-def client_with_bastion(cluster_node_lookup_repo, monkeypatch):
+def client_with_bastion(monkeypatch):
     """TestClient with cluster-node-lookup and bastion-mapping repos all overridden."""
     monkeypatch.setattr(svc_module.settings, "BASTION_NODE_TYPE_MAP", {"baremetal": "type1"})
     app = create_app()
