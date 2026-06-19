@@ -34,7 +34,7 @@ def test_cluster_node_lookup_known_node_returns_fixture(fake_app):
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["node_name"] == "node1"
+    assert body["node"]["name"] == "node1"
     assert body["cluster"]["name"] == "type1-cluster-c1"
 
 
