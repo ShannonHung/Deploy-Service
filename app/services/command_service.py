@@ -22,7 +22,6 @@ from app.repositories.command_state_repository import CommandStateRepository
 from app.repositories.inventory_repository import (
     BastionMappingRepository,
     ClusterNodeLookupRepository,
-    InventoryRepository,
 )
 from app.repositories.host_resolver import ResolvedHost, create_host_resolver
 from app.core.exceptions import (
@@ -54,12 +53,10 @@ class CommandService:
     def __init__(
         self,
         repo: CommandStateRepository,
-        inventory: Optional[InventoryRepository],
         cluster_node_lookup_repo: Optional[ClusterNodeLookupRepository] = None,
         mapping_repo: Optional[BastionMappingRepository] = None,
     ):
         self.repo = repo
-        self.inventory = inventory
         self.cluster_node_lookup_repo = cluster_node_lookup_repo
         self.mapping_repo = mapping_repo
 
@@ -184,13 +181,17 @@ class CommandService:
             if req.option and req.option.bastion_type
             else None
         )
+        ip_label = (
+            req.option.ip_label if req.option and req.option.ip_label
+            else settings.INVENTORY_IP_LABEL
+        )
         resolver = create_host_resolver(
             req.host_type,
-            inventory=self.inventory,
             cluster_node_lookup_repo=self.cluster_node_lookup_repo,
             mapping_repo=self.mapping_repo,
             node_type_map=settings.BASTION_NODE_TYPE_MAP,
             bastion_type=bastion_type,
+            ip_label=ip_label,
         )
         resolved = await resolver.resolve(req.host)
 

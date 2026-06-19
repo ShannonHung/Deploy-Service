@@ -1,7 +1,7 @@
 """Integration tests for the host_type field on /api/v1/command/execution.
 
 We override:
-  - get_inventory_repository → InMemoryInventoryRepository
+  - get_cluster_node_lookup_repository → InMemoryClusterNodeLookupRepository
   - asyncssh.connect → stub that records target host and returns a fake conn
 so we can assert the final SSH target without standing up real nodes.
 """
@@ -15,21 +15,14 @@ from app.core.dependencies import (
     get_bastion_mapping_repository,
     get_cluster_node_lookup_repository,
     get_command_state_repository,
-    get_inventory_repository,
 )
 from app.main import create_app
 from app.repositories.inventory_repository import BastionMapping
 from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef, NodeInfo
-from app.repositories.inventory_repository import (
-    InventoryBastion,
-    InventoryHostInfo,
-    InventoryRepository,
-)
 from tests.fixtures.cluster import (
     InMemoryBastionMappingRepository,
     InMemoryClusterNodeLookupRepository,
 )
-from tests.fixtures.inventory import InMemoryInventoryRepository
 
 
 class _InMemoryCommandStateRepo:
@@ -79,21 +72,21 @@ def _get_token(client: TestClient, account: str = "test_admin") -> str:
 
 
 @pytest.fixture
-def inventory() -> InventoryRepository:
-    return InMemoryInventoryRepository({
-        "node-a01": InventoryHostInfo(
-            hostname="node-a01",
-            ip="10.0.1.10",
-            bastion=InventoryBastion(hostname="bastion-a", ip="10.0.0.5"),
+def cluster_node_lookup_repo():
+    return InMemoryClusterNodeLookupRepository({
+        "node-a01": ClusterNodeInfo(
+            node_type="baremetal",
+            node=NodeInfo(id="1", name="node-a01", labels={"mgmt_ip": "10.0.1.10/24"}),
+            cluster=ClusterRef(id="1", name="cluster-c1"),
         ),
     })
 
 
 @pytest.fixture
-def client_with_inventory(inventory):
+def client_with_cluster_repo(cluster_node_lookup_repo):
     app = create_app()
     state_repo = _InMemoryCommandStateRepo()
-    app.dependency_overrides[get_inventory_repository] = lambda: inventory
+    app.dependency_overrides[get_cluster_node_lookup_repository] = lambda: cluster_node_lookup_repo
     app.dependency_overrides[get_command_state_repository] = lambda: state_repo
     with TestClient(app) as c:
         yield c
@@ -119,11 +112,11 @@ def _patch_asyncssh():
     )
 
 
-def test_host_type_ip_connects_to_raw_ip(client_with_inventory):
+def test_host_type_ip_connects_to_raw_ip(client_with_cluster_repo):
     p, _ = _patch_asyncssh()
     with p as mock_connect:
-        token = _get_token(client_with_inventory)
-        resp = client_with_inventory.post(
+        token = _get_token(client_with_cluster_repo)
+        resp = client_with_cluster_repo.post(
             "/api/v1/command/execution",
             headers={"Authorization": f"Bearer {token}"},
             json={
@@ -140,11 +133,11 @@ def test_host_type_ip_connects_to_raw_ip(client_with_inventory):
         assert called_host == "10.0.99.99"
 
 
-def test_host_type_hostname_connects_to_resolved_ip(client_with_inventory):
+def test_host_type_hostname_connects_to_resolved_ip(client_with_cluster_repo):
     p, _ = _patch_asyncssh()
     with p as mock_connect:
-        token = _get_token(client_with_inventory)
-        resp = client_with_inventory.post(
+        token = _get_token(client_with_cluster_repo)
+        resp = client_with_cluster_repo.post(
             "/api/v1/command/execution",
             headers={"Authorization": f"Bearer {token}"},
             json={
@@ -158,16 +151,16 @@ def test_host_type_hostname_connects_to_resolved_ip(client_with_inventory):
         )
         assert resp.status_code == 200, resp.text
         called_host = mock_connect.call_args.kwargs["host"]
-        assert called_host == "10.0.1.10"
+        assert called_host == "10.0.1.10"  # mgmt_ip CIDR strip
 
 
 @pytest.fixture
-def client_with_bastion(inventory, monkeypatch):
-    """TestClient with inventory, cluster-node-lookup, and bastion-mapping repos all overridden."""
+def client_with_bastion(cluster_node_lookup_repo, monkeypatch):
+    """TestClient with cluster-node-lookup and bastion-mapping repos all overridden."""
     monkeypatch.setattr(svc_module.settings, "BASTION_NODE_TYPE_MAP", {"baremetal": "type1"})
     app = create_app()
     state_repo = _InMemoryCommandStateRepo()
-    cluster_node_lookup_repo = InMemoryClusterNodeLookupRepository({
+    cluster_repo = InMemoryClusterNodeLookupRepository({
         "node1": ClusterNodeInfo(
             node_type="baremetal",
             node=NodeInfo(id="1", name="node1", labels={"mgmt_ip": "10.0.1.5/8", "router_id": "10.0.1.1"}),
@@ -183,9 +176,8 @@ def client_with_bastion(inventory, monkeypatch):
             )
         ]
     })
-    app.dependency_overrides[get_inventory_repository] = lambda: inventory
     app.dependency_overrides[get_command_state_repository] = lambda: state_repo
-    app.dependency_overrides[get_cluster_node_lookup_repository] = lambda: cluster_node_lookup_repo
+    app.dependency_overrides[get_cluster_node_lookup_repository] = lambda: cluster_repo
     app.dependency_overrides[get_bastion_mapping_repository] = lambda: mapping_repo
     with TestClient(app) as c:
         yield c
@@ -213,9 +205,9 @@ def test_host_type_bastion_connects_to_mapped_bastion_ip(client_with_bastion):
         assert called_host == "10.99.99.1"
 
 
-def test_hostname_not_in_inventory_returns_404(client_with_inventory):
-    token = _get_token(client_with_inventory)
-    resp = client_with_inventory.post(
+def test_hostname_not_in_cluster_lookup_returns_404(client_with_cluster_repo):
+    token = _get_token(client_with_cluster_repo)
+    resp = client_with_cluster_repo.post(
         "/api/v1/command/execution",
         headers={"Authorization": f"Bearer {token}"},
         json={
@@ -228,13 +220,12 @@ def test_hostname_not_in_inventory_returns_404(client_with_inventory):
         },
     )
     assert resp.status_code == 404, resp.text
-    body = resp.json()
-    assert body["error"]["code"] == "NOT_FOUND"
+    assert resp.json()["error"]["code"] == "NOT_FOUND"
 
 
-def test_unknown_host_type_returns_422(client_with_inventory):
-    token = _get_token(client_with_inventory)
-    resp = client_with_inventory.post(
+def test_unknown_host_type_returns_422(client_with_cluster_repo):
+    token = _get_token(client_with_cluster_repo)
+    resp = client_with_cluster_repo.post(
         "/api/v1/command/execution",
         headers={"Authorization": f"Bearer {token}"},
         json={
@@ -250,7 +241,7 @@ def test_unknown_host_type_returns_422(client_with_inventory):
 
 
 def test_poll_response_surfaces_host_type_resolved_ip_and_pgids(
-    client_with_inventory,
+    client_with_cluster_repo,
 ):
     """GET /command/execution/{id} should expose host_type, resolved_ip, pgids."""
     from app.core.dependencies import get_command_state_repository
@@ -278,12 +269,12 @@ def test_poll_response_surfaces_host_type_resolved_ip_and_pgids(
             assert command_id == "fixed-id"
             return fixed_state
 
-    client_with_inventory.app.dependency_overrides[
+    client_with_cluster_repo.app.dependency_overrides[
         get_command_state_repository
     ] = lambda: _StubRepo()
 
-    token = _get_token(client_with_inventory)
-    resp = client_with_inventory.get(
+    token = _get_token(client_with_cluster_repo)
+    resp = client_with_cluster_repo.get(
         "/api/v1/command/execution/fixed-id",
         headers={"Authorization": f"Bearer {token}"},
     )

@@ -13,24 +13,10 @@ from app.repositories.host_resolver import (
     ResolvedHost,
     create_host_resolver,
 )
-from app.repositories.inventory_repository import (
-    InventoryBastion,
-    InventoryHostInfo,
-)
 from tests.fixtures.cluster import (
     InMemoryBastionMappingRepository,
     InMemoryClusterNodeLookupRepository,
 )
-from tests.fixtures.inventory import InMemoryInventoryRepository
-
-
-def _inventory():
-    return InMemoryInventoryRepository({
-        "node-a01": InventoryHostInfo(
-            hostname="node-a01", ip="10.0.1.10",
-            bastion=InventoryBastion(hostname="bastion-a", ip="10.0.0.5"),
-        ),
-    })
 
 
 _NODE_TYPE_MAP = {"baremetal": "type1"}
@@ -63,28 +49,77 @@ async def test_ip_resolver_returns_input_unchanged():
     assert resolved == ResolvedHost(ip="10.0.0.1", source_input="10.0.0.1", metadata={})
 
 
-async def test_hostname_resolver_returns_host_ip():
-    resolver = HostnameHostResolver(_inventory())
-    resolved = await resolver.resolve("node-a01")
-    assert resolved.ip == "10.0.1.10"
-    assert resolved.source_input == "node-a01"
-    assert resolved.metadata == {"hostname": "node-a01"}
+async def test_hostname_resolver_returns_label_ip():
+    repo = InMemoryClusterNodeLookupRepository({
+        "node1": ClusterNodeInfo(
+            node_type="baremetal",
+            node=NodeInfo(id="1", name="node1", labels={"mgmt_ip": "10.1.2.3/8", "router_id": "10.2.3.4"}),
+            cluster=ClusterRef(id="1", name="cluster-c1"),
+        ),
+    })
+    resolver = HostnameHostResolver(cluster_node_lookup_repo=repo, ip_label="mgmt_ip")
+    resolved = await resolver.resolve("node1")
+    assert resolved.ip == "10.1.2.3"  # CIDR suffix stripped
+    assert resolved.source_input == "node1"
+    assert resolved.metadata["ip_label"] == "mgmt_ip"
 
 
-async def test_hostname_resolver_propagates_not_found():
-    resolver = HostnameHostResolver(_inventory())
+async def test_hostname_resolver_router_id_label():
+    repo = InMemoryClusterNodeLookupRepository({
+        "node1": ClusterNodeInfo(
+            node_type="baremetal",
+            node=NodeInfo(id="1", name="node1", labels={"mgmt_ip": "10.1.2.3/8", "router_id": "10.2.3.4"}),
+            cluster=ClusterRef(id="1", name="cluster-c1"),
+        ),
+    })
+    resolver = HostnameHostResolver(cluster_node_lookup_repo=repo, ip_label="router_id")
+    resolved = await resolver.resolve("node1")
+    assert resolved.ip == "10.2.3.4"
+
+
+async def test_hostname_resolver_missing_label_raises_command_execution_exception():
+    from app.core.exceptions import CommandExecutionException
+    repo = InMemoryClusterNodeLookupRepository({
+        "node1": ClusterNodeInfo(
+            node_type="baremetal",
+            node=NodeInfo(id="1", name="node1", labels={"mgmt_ip": "10.1.2.3/8"}),
+            cluster=ClusterRef(id="1", name="cluster-c1"),
+        ),
+    })
+    resolver = HostnameHostResolver(cluster_node_lookup_repo=repo, ip_label="nonexistent")
+    with pytest.raises(CommandExecutionException):
+        await resolver.resolve("node1")
+
+
+async def test_hostname_resolver_node_not_found_raises_not_found():
+    repo = InMemoryClusterNodeLookupRepository({})
+    resolver = HostnameHostResolver(cluster_node_lookup_repo=repo, ip_label="mgmt_ip")
     with pytest.raises(NotFoundException):
         await resolver.resolve("missing")
 
 
-def test_factory_returns_correct_resolver_class():
+def test_factory_hostname_uses_cluster_node_lookup_repo():
+    repo = InMemoryClusterNodeLookupRepository({})
+    resolver = create_host_resolver(
+        HostType.HOSTNAME,
+        cluster_node_lookup_repo=repo,
+        ip_label="mgmt_ip",
+    )
+    assert isinstance(resolver, HostnameHostResolver)
+
+
+def test_factory_hostname_without_repo_raises():
+    with pytest.raises(ValueError):
+        create_host_resolver(HostType.HOSTNAME)
+
+
+def test_factory_returns_ip_resolver():
     assert isinstance(
         create_host_resolver(HostType.IP), IpHostResolver
     )
-    assert isinstance(
-        create_host_resolver(HostType.HOSTNAME, inventory=_inventory()),
-        HostnameHostResolver,
-    )
+
+
+def test_factory_returns_bastion_resolver():
     assert isinstance(
         create_host_resolver(
             HostType.BASTION,

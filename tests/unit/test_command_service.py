@@ -2,11 +2,11 @@ import pytest
 from app.services.command_service import CommandService, CommandExecutionException
 
 def test_anti_injection_pass():
-    svc = CommandService(None, None)  # repo and inventory not used for this method
+    svc = CommandService(None)  # repo not used for this method
     svc._validate_anti_injection("safe_string_123")
 
 def test_anti_injection_fail():
-    svc = CommandService(None, None)
+    svc = CommandService(None)
     with pytest.raises(CommandExecutionException):
         svc._validate_anti_injection("ls; rm -rf /")
     with pytest.raises(CommandExecutionException):
@@ -32,7 +32,6 @@ from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef, N
 from tests.fixtures.cluster import (
     InMemoryBastionMappingRepository, InMemoryClusterNodeLookupRepository,
 )
-from tests.fixtures.inventory import InMemoryInventoryRepository
 
 
 def _service_for_bastion(cluster_node_lookup_repo, mapping_repo):
@@ -41,7 +40,6 @@ def _service_for_bastion(cluster_node_lookup_repo, mapping_repo):
     state_repo.save = AsyncMock()
     return CommandService(
         repo=state_repo,
-        inventory=InMemoryInventoryRepository({}),
         cluster_node_lookup_repo=cluster_node_lookup_repo,
         mapping_repo=mapping_repo,
     )

@@ -21,7 +21,6 @@ from app.domain.command import HostType
 from app.repositories.inventory_repository import (
     BastionMappingRepository,
     ClusterNodeLookupRepository,
-    InventoryRepository,
 )
 
 _logger = logging.getLogger(__name__)
@@ -44,15 +43,31 @@ class IpHostResolver(HostResolver):
 
 
 class HostnameHostResolver(HostResolver):
-    def __init__(self, inventory: InventoryRepository) -> None:
-        self._inventory = inventory
+    def __init__(
+        self,
+        cluster_node_lookup_repo: ClusterNodeLookupRepository,
+        ip_label: str,
+    ) -> None:
+        self._cluster_node_lookup_repo = cluster_node_lookup_repo
+        self._ip_label = ip_label
 
     async def resolve(self, raw_host: str) -> ResolvedHost:
-        info = await self._inventory.lookup(raw_host)
+        node_info = await self._cluster_node_lookup_repo.lookup_by_name(raw_host)
+        raw_ip = node_info.node.labels.get(self._ip_label)
+        if raw_ip is None:
+            raise CommandExecutionException(
+                f"Label '{self._ip_label}' not found in node labels for '{raw_host}'.",
+                detail={
+                    "node_name": raw_host,
+                    "ip_label": self._ip_label,
+                    "available_labels": list(node_info.node.labels.keys()),
+                },
+            )
+        ip = raw_ip.split("/")[0]
         return ResolvedHost(
-            ip=info.ip,
+            ip=ip,
             source_input=raw_host,
-            metadata={"hostname": info.hostname},
+            metadata={"node_name": raw_host, "ip_label": self._ip_label},
         )
 
 
@@ -133,18 +148,18 @@ class ClusterBastionHostResolver(HostResolver):
 def create_host_resolver(
     host_type: HostType,
     *,
-    inventory: Optional[InventoryRepository] = None,
     cluster_node_lookup_repo: Optional[ClusterNodeLookupRepository] = None,
     mapping_repo: Optional[BastionMappingRepository] = None,
     node_type_map: Optional[Dict[str, str]] = None,
     bastion_type: Optional[str] = None,
+    ip_label: Optional[str] = None,
 ) -> HostResolver:
     if host_type == HostType.IP:
         return IpHostResolver()
     if host_type == HostType.HOSTNAME:
-        if inventory is None:
-            raise ValueError("HOSTNAME resolver requires inventory")
-        return HostnameHostResolver(inventory)
+        if cluster_node_lookup_repo is None or ip_label is None:
+            raise ValueError("HOSTNAME resolver requires cluster_node_lookup_repo and ip_label")
+        return HostnameHostResolver(cluster_node_lookup_repo, ip_label)
     if host_type == HostType.BASTION:
         if cluster_node_lookup_repo is None or mapping_repo is None or node_type_map is None:
             raise ValueError(

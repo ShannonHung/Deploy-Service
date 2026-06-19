@@ -8,7 +8,6 @@ from app.core.dependencies import (
     get_bastion_mapping_repository,
     get_cluster_node_lookup_repository,
     get_command_state_repository,
-    get_inventory_repository,
 )
 from app.main import create_app
 from app.repositories.inventory_repository import BastionMapping
@@ -17,7 +16,6 @@ from tests.fixtures.cluster import (
     InMemoryBastionMappingRepository,
     InMemoryClusterNodeLookupRepository,
 )
-from tests.fixtures.inventory import InMemoryInventoryRepository
 from tests.integration.test_command_host_type import (
     _InMemoryCommandStateRepo,
     _get_token,
@@ -76,7 +74,6 @@ def client_full(monkeypatch):
     )
     app = create_app()
     app.dependency_overrides[get_command_state_repository] = lambda: _InMemoryCommandStateRepo()
-    app.dependency_overrides[get_inventory_repository] = lambda: InMemoryInventoryRepository({})
     app.dependency_overrides[get_cluster_node_lookup_repository] = lambda: _cluster_node_lookup_repo()
     app.dependency_overrides[get_bastion_mapping_repository] = lambda: _mapping_repo()
     with TestClient(app) as c:

@@ -70,7 +70,6 @@ from app.repositories.inventory_repository import (
     BastionMappingRepository,
     ClusterNodeLookupRepository,
     HttpInventoryRepository,
-    InventoryRepository,
 )
 from app.repositories.trace_cache_repository import (
     RedisTraceCache,
@@ -84,7 +83,7 @@ async def get_command_state_repository() -> CommandStateRepository:
     return CommandStateRepository(redis)
 
 
-async def get_inventory_repository() -> InventoryRepository:
+def _make_inventory_http_client() -> HttpInventoryRepository:
     s = get_settings()
     return HttpInventoryRepository(
         base_url=s.INVENTORY_API_URL,
@@ -94,20 +93,19 @@ async def get_inventory_repository() -> InventoryRepository:
 
 
 async def get_cluster_node_lookup_repository() -> ClusterNodeLookupRepository:
-    return await get_inventory_repository()
+    return _make_inventory_http_client()
 
 
 async def get_bastion_mapping_repository() -> BastionMappingRepository:
-    return await get_inventory_repository()
+    return _make_inventory_http_client()
 
 
 async def get_command_service(
     repo: CommandStateRepository = Depends(get_command_state_repository),
-    inventory: InventoryRepository = Depends(get_inventory_repository),
     cluster_node_lookup_repo: ClusterNodeLookupRepository = Depends(get_cluster_node_lookup_repository),
     mapping_repo: BastionMappingRepository = Depends(get_bastion_mapping_repository),
 ) -> CommandService:
-    return CommandService(repo, inventory, cluster_node_lookup_repo, mapping_repo)
+    return CommandService(repo, cluster_node_lookup_repo, mapping_repo)
 
 
 async def get_trace_cache_repository() -> TraceCacheRepository:

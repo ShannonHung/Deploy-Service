@@ -1,12 +1,10 @@
 """Inventory API repository.
 
 Single HTTP client for all inventory service endpoints:
-  - GET /inventory/hosts/{hostname}
   - GET /api/v1/k8s-clusters/node-cluster-lookup?node_name={name}
   - GET /api/v1/bastion-cluster-mappings?name={name}
 
 Contract per endpoint:
-  - lookup_host:      200 → InventoryHostInfo; 404 → NotFoundException
   - lookup_by_name:   200 → ClusterNodeInfo;   404 → NotFoundException
   - list_mappings:    200 + exactly 1 result → list[BastionMapping] from result["data"]
                       200 + 0 results → NotFoundException
@@ -31,17 +29,6 @@ from app.core.exceptions import (
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
-
-class InventoryBastion(BaseModel):
-    hostname: str
-    ip: str
-
-
-class InventoryHostInfo(BaseModel):
-    hostname: str
-    ip: str
-    bastion: InventoryBastion
-
 
 class ClusterRef(BaseModel):
     id: str
@@ -69,13 +56,6 @@ class BastionMapping(BaseModel):
 
 # ── Abstract interfaces ───────────────────────────────────────────────────────
 
-class InventoryRepository(ABC):
-    """Look up a host record by hostname."""
-
-    @abstractmethod
-    async def lookup(self, hostname: str) -> InventoryHostInfo: ...
-
-
 class ClusterNodeLookupRepository(ABC):
     """Look up the cluster a node belongs to."""
 
@@ -93,7 +73,7 @@ class BastionMappingRepository(ABC):
 # ── HTTP implementation ───────────────────────────────────────────────────────
 
 class HttpInventoryRepository(
-    InventoryRepository, ClusterNodeLookupRepository, BastionMappingRepository
+    ClusterNodeLookupRepository, BastionMappingRepository
 ):
     """Single httpx client implementing all three inventory API interfaces."""
 
@@ -115,39 +95,6 @@ class HttpInventoryRepository(
             timeout=self._timeout,
             transport=self._transport,
         )
-
-    # ── InventoryRepository ───────────────────────────────────────────────────
-
-    async def lookup(self, hostname: str) -> InventoryHostInfo:
-        try:
-            async with self._client() as client:
-                resp = await client.get(
-                    f"/inventory/hosts/{hostname}",
-                    headers={"Authorization": f"Token {self._token}"},
-                )
-        except httpx.TimeoutException as exc:
-            raise UpstreamTimeoutException(
-                f"Inventory lookup for '{hostname}' timed out after {self._timeout}s.",
-                detail={"hostname": hostname},
-            ) from exc
-        except httpx.RequestError as exc:
-            raise UpstreamUnavailableException(
-                f"Inventory lookup for '{hostname}' failed: {exc}",
-                detail={"hostname": hostname},
-            ) from exc
-
-        if resp.status_code == 404:
-            raise NotFoundException(
-                f"Host '{hostname}' not found in inventory.",
-                detail={"hostname": hostname},
-            )
-        if resp.status_code >= 400:
-            raise UpstreamUnavailableException(
-                f"Inventory returned {resp.status_code} for '{hostname}'.",
-                detail={"hostname": hostname, "status_code": resp.status_code},
-            )
-
-        return InventoryHostInfo.model_validate(resp.json())
 
     # ── ClusterNodeLookupRepository ───────────────────────────────────────────
 
