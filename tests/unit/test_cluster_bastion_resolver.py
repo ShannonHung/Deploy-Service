@@ -2,7 +2,7 @@ import pytest
 
 from app.core.exceptions import CommandExecutionException, NotFoundException
 from app.repositories.inventory_repository import BastionMapping
-from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef
+from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef, NodeInfo
 from app.repositories.host_resolver import ClusterBastionHostResolver
 from tests.fixtures.cluster import (
     InMemoryBastionMappingRepository,
@@ -20,7 +20,7 @@ def _node_lookup_repo(
         {
             "node1": ClusterNodeInfo(
                 node_type=node_type,
-                node_name="node1",
+                node=NodeInfo(id="1", name="node1", labels={"mgmt_ip": "10.0.1.5/8", "router_id": "10.0.1.1"}),
                 cluster=ClusterRef(id="1", name=cluster_name),
             )
         }

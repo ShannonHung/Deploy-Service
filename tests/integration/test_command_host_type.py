@@ -19,7 +19,7 @@ from app.core.dependencies import (
 )
 from app.main import create_app
 from app.repositories.inventory_repository import BastionMapping
-from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef
+from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef, NodeInfo
 from app.repositories.inventory_repository import (
     InventoryBastion,
     InventoryHostInfo,
@@ -169,7 +169,8 @@ def client_with_bastion(inventory, monkeypatch):
     state_repo = _InMemoryCommandStateRepo()
     cluster_node_lookup_repo = InMemoryClusterNodeLookupRepository({
         "node1": ClusterNodeInfo(
-            node_type="baremetal", node_name="node1",
+            node_type="baremetal",
+            node=NodeInfo(id="1", name="node1", labels={"mgmt_ip": "10.0.1.5/8", "router_id": "10.0.1.1"}),
             cluster=ClusterRef(id="1", name="type1-cluster-c1"),
         ),
     })

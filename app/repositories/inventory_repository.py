@@ -18,10 +18,10 @@ Contract per endpoint:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.exceptions import (
     NotFoundException,
@@ -48,9 +48,15 @@ class ClusterRef(BaseModel):
     name: str
 
 
+class NodeInfo(BaseModel):
+    id: str
+    name: str
+    labels: Dict[str, str] = Field(default_factory=dict)
+
+
 class ClusterNodeInfo(BaseModel):
     node_type: str
-    node_name: str
+    node: NodeInfo
     cluster: ClusterRef
 
 

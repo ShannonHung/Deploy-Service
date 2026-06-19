@@ -12,7 +12,7 @@ from app.core.dependencies import (
 )
 from app.main import create_app
 from app.repositories.inventory_repository import BastionMapping
-from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef
+from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef, NodeInfo
 from tests.fixtures.cluster import (
     InMemoryBastionMappingRepository,
     InMemoryClusterNodeLookupRepository,
@@ -28,16 +28,19 @@ from tests.integration.test_command_host_type import (
 def _cluster_node_lookup_repo():
     return InMemoryClusterNodeLookupRepository({
         "node1": ClusterNodeInfo(
-            node_type="baremetal", node_name="node1",
+            node_type="baremetal",
+            node=NodeInfo(id="1", name="node1", labels={"mgmt_ip": "10.0.1.5/8", "router_id": "10.0.1.1"}),
             cluster=ClusterRef(id="1", name="type1-cluster-c1"),
         ),
         "node2": ClusterNodeInfo(
             # virtual-machine → maps to type2 via BASTION_NODE_TYPE_MAP
-            node_type="virtual-machine", node_name="node2",
+            node_type="virtual-machine",
+            node=NodeInfo(id="2", name="node2", labels={}),
             cluster=ClusterRef(id="2", name="type2-cluster-c1"),
         ),
         "node3": ClusterNodeInfo(
-            node_type="baremetal", node_name="node3",
+            node_type="baremetal",
+            node=NodeInfo(id="3", name="node3", labels={}),
             cluster=ClusterRef(id="3", name="orphan-cluster"),
         ),
     })
