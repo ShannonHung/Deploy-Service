@@ -28,7 +28,7 @@ from app.domain.command import (
     CommandExecutionRequest, CommandOption, HostType,
 )
 from app.repositories.inventory_repository import BastionMapping
-from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef
+from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef, NodeInfo
 from tests.fixtures.cluster import (
     InMemoryBastionMappingRepository, InMemoryClusterNodeLookupRepository,
 )
@@ -51,7 +51,7 @@ def _node_lookup(cluster: str, node_type: str = "baremetal") -> InMemoryClusterN
     return InMemoryClusterNodeLookupRepository({
         "n1": ClusterNodeInfo(
             node_type=node_type,
-            node_name="n1",
+            node=NodeInfo(id="1", name="n1", labels={}),
             cluster=ClusterRef(id="1", name=cluster),
         )
     })
