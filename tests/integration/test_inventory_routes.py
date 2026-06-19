@@ -83,13 +83,12 @@ def test_lookup_by_name_no_token_returns_401(inventory_client):
 
 
 def test_lookup_by_name_wrong_scope_returns_403(inventory_client):
-    # test_viewer 只有 deploy_api scope，沒有 command_api
+    # test_deployer 只有 deploy_api scope，沒有 command_api
     resp = inventory_client.post(
         "/token",
-        data={"username": "test_viewer", "password": "secret"},
+        data={"username": "test_deployer", "password": "secret"},
     )
-    if resp.status_code != 200:
-        pytest.skip("test_viewer user not configured")
+    assert resp.status_code == 200, "test_deployer must be configured in tests/fixtures/users.json"
     token = resp.json()["access_token"]
     resp = inventory_client.get(
         "/api/v1/inventory/nodes/node1",

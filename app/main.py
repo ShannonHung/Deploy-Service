@@ -72,7 +72,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         redis = await RedisClient.get_client()
         repo = CommandStateRepository(redis)
-        svc = CommandService(repo, inventory=None)
+        svc = CommandService(repo)
         await svc.shutdown_gracefully()
     except Exception as e:
         _logger.error(f"Error during graceful shutdown: {e}")
