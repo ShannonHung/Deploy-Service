@@ -64,12 +64,12 @@ def get_current_user(required_scopes: list[str] | None = None) -> Callable:
 
     return _dependency
 
+from app.clients.inventory_client import InventoryClient, InventoryTokenManager
 from app.core.redis_client import RedisClient
 from app.repositories.command_state_repository import CommandStateRepository
 from app.repositories.inventory_repository import (
     BastionMappingRepository,
     ClusterNodeLookupRepository,
-    HttpInventoryRepository,
 )
 from app.repositories.trace_cache_repository import (
     RedisTraceCache,
@@ -78,26 +78,38 @@ from app.repositories.trace_cache_repository import (
 from app.services.command_service import CommandService
 from app.core.config import get_settings
 
+_inventory_token_manager: InventoryTokenManager | None = None
+
+
+def _get_inventory_token_manager() -> InventoryTokenManager:
+    global _inventory_token_manager
+    if _inventory_token_manager is None:
+        s = get_settings()
+        _inventory_token_manager = InventoryTokenManager(api_key=s.INVENTORY_API_TOKEN)
+    return _inventory_token_manager
+
+
+def _build_inventory_client() -> InventoryClient:
+    s = get_settings()
+    return InventoryClient(
+        base_url=s.INVENTORY_API_URL,
+        token_manager=_get_inventory_token_manager(),
+        timeout=s.INVENTORY_API_TIMEOUT_SECONDS,
+        verify_ssl=s.INVENTORY_API_VERIFY_SSL,
+    )
+
+
 async def get_command_state_repository() -> CommandStateRepository:
     redis = await RedisClient.get_client()
     return CommandStateRepository(redis)
 
 
-def _make_inventory_http_client() -> HttpInventoryRepository:
-    s = get_settings()
-    return HttpInventoryRepository(
-        base_url=s.INVENTORY_API_URL,
-        token=s.INVENTORY_API_TOKEN,
-        timeout_seconds=s.INVENTORY_API_TIMEOUT_SECONDS,
-    )
-
-
 async def get_cluster_node_lookup_repository() -> ClusterNodeLookupRepository:
-    return _make_inventory_http_client()
+    return _build_inventory_client()
 
 
 async def get_bastion_mapping_repository() -> BastionMappingRepository:
-    return _make_inventory_http_client()
+    return _build_inventory_client()
 
 
 async def get_command_service(
