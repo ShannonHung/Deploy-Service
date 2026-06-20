@@ -12,10 +12,10 @@ from app.core.exceptions import (
 from app.domain.command import CommandExecutionRequest
 from app.services.command_service import CommandService
 import app.services.command_service as cs_mod
-from tests.fixtures.inventory import InMemoryInventoryRepository
 from app.repositories.inventory_repository import (
-    InventoryBastion, InventoryHostInfo,
+    ClusterNodeInfo, ClusterRef, NodeInfo,
 )
+from tests.fixtures.cluster import InMemoryInventoryRepository
 
 
 def _whitelist_file(tmp_path: Path, body: dict) -> Path:
@@ -41,13 +41,14 @@ def svc(tmp_path, monkeypatch):
     # internal references see the new COMMAND_CONFIG_DIR.
     monkeypatch.setattr(cs_mod, "settings", get_settings())
 
-    inventory = InMemoryInventoryRepository({
-        "node-a01": InventoryHostInfo(
-            hostname="node-a01", ip="10.0.1.10",
-            bastion=InventoryBastion(hostname="bastion-a", ip="10.0.0.5"),
+    inventory_repo = InMemoryInventoryRepository(nodes={
+        "node-a01": ClusterNodeInfo(
+            node_type="baremetal",
+            node=NodeInfo(id="1", name="node-a01", labels={"mgmt_ip": "10.0.1.10"}),
+            cluster=ClusterRef(id="1", name="cluster-c1"),
         ),
     })
-    return CommandService(repo=None, inventory=inventory), tmp_path
+    return CommandService(repo=None, inventory_repo=inventory_repo), tmp_path
 
 
 async def test_no_whitelist_file_raises_forbidden(svc):

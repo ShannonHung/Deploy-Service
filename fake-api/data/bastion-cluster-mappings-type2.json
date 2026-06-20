@@ -4,16 +4,22 @@
   "previous": null,
   "results": [
     {
-      "pattern": ["type2-cluster-(c1|c2|c3)", "type2-cluster.*"],
-      "runner": "type2-runner",
-      "bastion": "type2-bastion",
-      "bastion_ip": "10.223.192.40"
-    },
-    {
-      "pattern": ["type2-kind"],
-      "runner": "type2-kind-runner",
-      "bastion": "type2-kind-bastion",
-      "bastion_ip": "10.223.192.40"
+      "id": "123",
+      "name": "type2",
+      "data": [
+        {
+          "patterns": ["type2-cluster-(c1|c2|c3)", "type2-cluster.*"],
+          "runner": "type2-runner",
+          "bastion": "type2-bastion",
+          "bastion_ip": "10.223.192.40"
+        },
+        {
+          "patterns": ["type2-kind"],
+          "runner": "type2-kind-runner",
+          "bastion": "type2-kind-bastion",
+          "bastion_ip": "10.223.192.40"
+        }
+      ]
     }
   ]
 }
