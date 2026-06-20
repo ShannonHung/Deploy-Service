@@ -90,7 +90,7 @@ class HttpInventoryRepository(InventoryRepository):
             transport=self._transport,
         )
 
-    # ── ClusterNodeLookupRepository ───────────────────────────────────────────
+    # ── InventoryRepository methods ──────────────────────────────────────────
 
     async def lookup_by_name(self, node_name: str) -> ClusterNodeInfo:
         try:
@@ -137,8 +137,6 @@ class HttpInventoryRepository(InventoryRepository):
                 f"Cluster node lookup API returned unexpected payload shape for '{node_name}'.",
                 detail={"node_name": node_name},
             )
-
-    # ── BastionMappingRepository ──────────────────────────────────────────────
 
     async def list_mappings(self, type_name: str) -> List[BastionMapping]:
         try:

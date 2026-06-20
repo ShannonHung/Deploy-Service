@@ -2,7 +2,7 @@
 
 from typing import Dict, List
 
-from app.core.exceptions import NotFoundException, UpstreamUnavailableException
+from app.core.exceptions import NotFoundException
 from app.repositories.inventory_repository import (
     BastionMapping,
     ClusterNodeInfo,
@@ -35,20 +35,3 @@ class InMemoryInventoryRepository(InventoryRepository):
                 detail={"type": type_name},
             )
         return mappings
-
-
-# Backward-compatible aliases — kept so that tests migrated incrementally
-# can still import these names. New tests should use InMemoryInventoryRepository directly.
-
-class InMemoryClusterNodeLookupRepository(InMemoryInventoryRepository):
-    """Alias for InMemoryInventoryRepository (node-lookup-only constructor)."""
-
-    def __init__(self, nodes: Dict[str, ClusterNodeInfo] | None = None) -> None:
-        super().__init__(nodes=nodes, mappings={})
-
-
-class InMemoryBastionMappingRepository(InMemoryInventoryRepository):
-    """Alias for InMemoryInventoryRepository (mapping-only constructor)."""
-
-    def __init__(self, mappings: Dict[str, List[BastionMapping]] | None = None) -> None:
-        super().__init__(nodes={}, mappings=mappings)

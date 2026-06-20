@@ -140,7 +140,7 @@ class InventoryClient(InventoryRepository):
             ) from exc
         return response
 
-    # ── ClusterNodeLookupRepository ───────────────────────────────────────────
+    # ── InventoryRepository methods ──────────────────────────────────────────
 
     async def lookup_by_name(self, node_name: str) -> ClusterNodeInfo:
         response = await self._request_with_retry(
@@ -167,8 +167,6 @@ class InventoryClient(InventoryRepository):
                 f"Inventory API returned unexpected payload shape for lookup_by_name('{node_name}').",
                 detail={"node_name": node_name},
             )
-
-    # ── BastionMappingRepository ──────────────────────────────────────────────
 
     async def list_mappings(self, type_name: str) -> List[BastionMapping]:
         response = await self._request_with_retry(
