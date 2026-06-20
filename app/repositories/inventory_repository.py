@@ -16,7 +16,7 @@ Contract per endpoint:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 import httpx
 from pydantic import BaseModel, Field
@@ -52,6 +52,16 @@ class BastionMapping(BaseModel):
     runner: str
     bastion: str
     bastion_ip: str
+
+
+class NodeBastionResolution(BaseModel):
+    node_type: str
+    node: NodeInfo
+    cluster: ClusterRef
+    bastion_type: str
+    bastion_type_source: Literal["config", "query_param"]
+    matched_mapping: BastionMapping
+    matched_pattern: str
 
 
 # ── Abstract interfaces ───────────────────────────────────────────────────────
