@@ -32,7 +32,7 @@ class InventoryService:
         node_info = await self._repo.lookup_by_name(node_name)
         cluster_name = node_info.cluster.name
 
-        if bastion_type_override:
+        if bastion_type_override is not None:
             bastion_type = bastion_type_override
             bastion_type_source = "query_param"
         else:
