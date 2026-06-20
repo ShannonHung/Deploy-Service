@@ -1,7 +1,7 @@
 """Inventory API HTTP client.
 
 InventoryTokenManager  — 靜態 API key，未來可換成 JWT 只需改這個 class
-InventoryClient        — 實作 ClusterNodeLookupRepository + BastionMappingRepository
+InventoryClient        — 實作 InventoryRepository
 """
 from __future__ import annotations
 
@@ -20,9 +20,8 @@ from app.core.exceptions import (
 )
 from app.repositories.inventory_repository import (
     BastionMapping,
-    BastionMappingRepository,
     ClusterNodeInfo,
-    ClusterNodeLookupRepository,
+    InventoryRepository,
 )
 
 _logger = logging.getLogger(__name__)
@@ -70,7 +69,7 @@ class InventoryTokenManager(TokenManager):
 
 # ── InventoryClient ───────────────────────────────────────────────────────────
 
-class InventoryClient(ClusterNodeLookupRepository, BastionMappingRepository):
+class InventoryClient(InventoryRepository):
     """Async HTTP client for the Inventory API."""
 
     def __init__(

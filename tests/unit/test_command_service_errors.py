@@ -15,7 +15,7 @@ import app.services.command_service as cs_mod
 from app.repositories.inventory_repository import (
     ClusterNodeInfo, ClusterRef, NodeInfo,
 )
-from tests.fixtures.cluster import InMemoryClusterNodeLookupRepository
+from tests.fixtures.cluster import InMemoryInventoryRepository
 
 
 def _whitelist_file(tmp_path: Path, body: dict) -> Path:
@@ -41,14 +41,14 @@ def svc(tmp_path, monkeypatch):
     # internal references see the new COMMAND_CONFIG_DIR.
     monkeypatch.setattr(cs_mod, "settings", get_settings())
 
-    cluster_node_lookup_repo = InMemoryClusterNodeLookupRepository({
+    inventory_repo = InMemoryInventoryRepository(nodes={
         "node-a01": ClusterNodeInfo(
             node_type="baremetal",
             node=NodeInfo(id="1", name="node-a01", labels={"mgmt_ip": "10.0.1.10"}),
             cluster=ClusterRef(id="1", name="cluster-c1"),
         ),
     })
-    return CommandService(repo=None, cluster_node_lookup_repo=cluster_node_lookup_repo), tmp_path
+    return CommandService(repo=None, inventory_repo=inventory_repo), tmp_path
 
 
 async def test_no_whitelist_file_raises_forbidden(svc):

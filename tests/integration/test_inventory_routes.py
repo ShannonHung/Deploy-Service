@@ -4,10 +4,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.dependencies import (
-    get_bastion_mapping_repository,
-    get_cluster_node_lookup_repository,
-)
+from app.core.dependencies import get_inventory_repository
 from app.main import create_app
 from app.repositories.inventory_repository import (
     BastionMapping,
@@ -15,10 +12,7 @@ from app.repositories.inventory_repository import (
     ClusterRef,
     NodeInfo,
 )
-from tests.fixtures.cluster import (
-    InMemoryBastionMappingRepository,
-    InMemoryClusterNodeLookupRepository,
-)
+from tests.fixtures.cluster import InMemoryInventoryRepository
 
 
 def _get_token(client: TestClient, account: str = "test_admin") -> str:
@@ -28,26 +22,27 @@ def _get_token(client: TestClient, account: str = "test_admin") -> str:
 
 @pytest.fixture
 def inventory_client():
-    cluster_repo = InMemoryClusterNodeLookupRepository({
-        "node1": ClusterNodeInfo(
-            node_type="baremetal",
-            node=NodeInfo(id="1", name="node1", labels={"mgmt_ip": "10.0.1.5/24"}),
-            cluster=ClusterRef(id="1", name="cluster-c1"),
-        ),
-    })
-    mapping_repo = InMemoryBastionMappingRepository({
-        "type1": [
-            BastionMapping(
-                patterns=["cluster-c.*"],
-                runner="r1",
-                bastion="bastion1",
-                bastion_ip="10.99.0.1",
-            )
-        ]
-    })
+    inv_repo = InMemoryInventoryRepository(
+        nodes={
+            "node1": ClusterNodeInfo(
+                node_type="baremetal",
+                node=NodeInfo(id="1", name="node1", labels={"mgmt_ip": "10.0.1.5/24"}),
+                cluster=ClusterRef(id="1", name="cluster-c1"),
+            ),
+        },
+        mappings={
+            "type1": [
+                BastionMapping(
+                    patterns=["cluster-c.*"],
+                    runner="r1",
+                    bastion="bastion1",
+                    bastion_ip="10.99.0.1",
+                )
+            ]
+        },
+    )
     app = create_app()
-    app.dependency_overrides[get_cluster_node_lookup_repository] = lambda: cluster_repo
-    app.dependency_overrides[get_bastion_mapping_repository] = lambda: mapping_repo
+    app.dependency_overrides[get_inventory_repository] = lambda: inv_repo
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

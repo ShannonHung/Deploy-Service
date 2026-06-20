@@ -56,15 +56,11 @@ class BastionMapping(BaseModel):
 
 # ── Abstract interfaces ───────────────────────────────────────────────────────
 
-class ClusterNodeLookupRepository(ABC):
-    """Look up the cluster a node belongs to."""
+class InventoryRepository(ABC):
+    """Unified inventory service interface: node lookup + bastion mapping."""
 
     @abstractmethod
     async def lookup_by_name(self, node_name: str) -> ClusterNodeInfo: ...
-
-
-class BastionMappingRepository(ABC):
-    """List bastion-cluster mappings for a given type."""
 
     @abstractmethod
     async def list_mappings(self, type_name: str) -> List[BastionMapping]: ...
@@ -72,9 +68,7 @@ class BastionMappingRepository(ABC):
 
 # ── HTTP implementation ───────────────────────────────────────────────────────
 
-class HttpInventoryRepository(
-    ClusterNodeLookupRepository, BastionMappingRepository
-):
+class HttpInventoryRepository(InventoryRepository):
     """Single httpx client implementing all three inventory API interfaces."""
 
     def __init__(

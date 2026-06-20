@@ -12,16 +12,14 @@ from typing import Annotated, List
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.core.dependencies import (
-    get_bastion_mapping_repository,
-    get_cluster_node_lookup_repository,
     get_current_user,
+    get_inventory_repository,
 )
 from app.domain.models import ApiResponse, User
 from app.repositories.inventory_repository import (
     BastionMapping,
-    BastionMappingRepository,
     ClusterNodeInfo,
-    ClusterNodeLookupRepository,
+    InventoryRepository,
 )
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
@@ -40,7 +38,7 @@ async def get_node(
     request: Request,
     node_name: str,
     current_user: Annotated[User, Depends(get_current_user(["command_api"]))] = None,
-    repo: ClusterNodeLookupRepository = Depends(get_cluster_node_lookup_repository),
+    repo: InventoryRepository = Depends(get_inventory_repository),
 ) -> ApiResponse[ClusterNodeInfo]:
     data = await repo.lookup_by_name(node_name)
     return ApiResponse(data=data, request_id=_request_id(request))
@@ -55,7 +53,7 @@ async def get_mappings(
     request: Request,
     type: str = Query(..., description="Bastion type name"),
     current_user: Annotated[User, Depends(get_current_user(["command_api"]))] = None,
-    repo: BastionMappingRepository = Depends(get_bastion_mapping_repository),
+    repo: InventoryRepository = Depends(get_inventory_repository),
 ) -> ApiResponse[List[BastionMapping]]:
     data = await repo.list_mappings(type)
     return ApiResponse(data=data, request_id=_request_id(request))

@@ -1,7 +1,7 @@
 """Integration tests for the host_type field on /api/v1/command/execution.
 
 We override:
-  - get_cluster_node_lookup_repository → InMemoryClusterNodeLookupRepository
+  - get_inventory_repository → InMemoryInventoryRepository
   - asyncssh.connect → stub that records target host and returns a fake conn
 so we can assert the final SSH target without standing up real nodes.
 """
@@ -12,17 +12,13 @@ from fastapi.testclient import TestClient
 
 import app.services.command_service as svc_module
 from app.core.dependencies import (
-    get_bastion_mapping_repository,
-    get_cluster_node_lookup_repository,
     get_command_state_repository,
+    get_inventory_repository,
 )
 from app.main import create_app
 from app.repositories.inventory_repository import BastionMapping
 from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef, NodeInfo
-from tests.fixtures.cluster import (
-    InMemoryBastionMappingRepository,
-    InMemoryClusterNodeLookupRepository,
-)
+from tests.fixtures.cluster import InMemoryInventoryRepository
 
 
 class _InMemoryCommandStateRepo:
@@ -72,21 +68,23 @@ def _get_token(client: TestClient, account: str = "test_admin") -> str:
 
 
 @pytest.fixture
-def cluster_node_lookup_repo():
-    return InMemoryClusterNodeLookupRepository({
-        "node-a01": ClusterNodeInfo(
-            node_type="baremetal",
-            node=NodeInfo(id="1", name="node-a01", labels={"mgmt_ip": "10.0.1.10/24"}),
-            cluster=ClusterRef(id="1", name="cluster-c1"),
-        ),
-    })
+def inventory_repo():
+    return InMemoryInventoryRepository(
+        nodes={
+            "node-a01": ClusterNodeInfo(
+                node_type="baremetal",
+                node=NodeInfo(id="1", name="node-a01", labels={"mgmt_ip": "10.0.1.10/24"}),
+                cluster=ClusterRef(id="1", name="cluster-c1"),
+            ),
+        }
+    )
 
 
 @pytest.fixture
-def client_with_cluster_repo(cluster_node_lookup_repo):
+def client_with_cluster_repo(inventory_repo):
     app = create_app()
     state_repo = _InMemoryCommandStateRepo()
-    app.dependency_overrides[get_cluster_node_lookup_repository] = lambda: cluster_node_lookup_repo
+    app.dependency_overrides[get_inventory_repository] = lambda: inventory_repo
     app.dependency_overrides[get_command_state_repository] = lambda: state_repo
     with TestClient(app) as c:
         yield c
@@ -156,29 +154,30 @@ def test_host_type_hostname_connects_to_resolved_ip(client_with_cluster_repo):
 
 @pytest.fixture
 def client_with_bastion(monkeypatch):
-    """TestClient with cluster-node-lookup and bastion-mapping repos all overridden."""
+    """TestClient with a unified inventory repo covering both node lookup and bastion mapping."""
     monkeypatch.setattr(svc_module.settings, "BASTION_NODE_TYPE_MAP", {"baremetal": "type1"})
     app = create_app()
     state_repo = _InMemoryCommandStateRepo()
-    cluster_repo = InMemoryClusterNodeLookupRepository({
-        "node1": ClusterNodeInfo(
-            node_type="baremetal",
-            node=NodeInfo(id="1", name="node1", labels={"mgmt_ip": "10.0.1.5/8", "router_id": "10.0.1.1"}),
-            cluster=ClusterRef(id="1", name="type1-cluster-c1"),
-        ),
-    })
-    mapping_repo = InMemoryBastionMappingRepository({
-        "type1": [
-            BastionMapping(
-                patterns=["type1-cluster-(c1|c2|c3)", "type1-cluster.*"],
-                runner="r1", bastion="bastion-type1",
-                bastion_ip="10.99.99.1",
-            )
-        ]
-    })
+    inv_repo = InMemoryInventoryRepository(
+        nodes={
+            "node1": ClusterNodeInfo(
+                node_type="baremetal",
+                node=NodeInfo(id="1", name="node1", labels={"mgmt_ip": "10.0.1.5/8", "router_id": "10.0.1.1"}),
+                cluster=ClusterRef(id="1", name="type1-cluster-c1"),
+            ),
+        },
+        mappings={
+            "type1": [
+                BastionMapping(
+                    patterns=["type1-cluster-(c1|c2|c3)", "type1-cluster.*"],
+                    runner="r1", bastion="bastion-type1",
+                    bastion_ip="10.99.99.1",
+                )
+            ]
+        },
+    )
     app.dependency_overrides[get_command_state_repository] = lambda: state_repo
-    app.dependency_overrides[get_cluster_node_lookup_repository] = lambda: cluster_repo
-    app.dependency_overrides[get_bastion_mapping_repository] = lambda: mapping_repo
+    app.dependency_overrides[get_inventory_repository] = lambda: inv_repo
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

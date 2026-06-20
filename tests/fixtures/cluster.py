@@ -1,39 +1,54 @@
-"""In-memory ClusterNodeLookupRepository + BastionMappingRepository for tests."""
+"""In-memory InventoryRepository for tests."""
 
 from typing import Dict, List
 
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import NotFoundException, UpstreamUnavailableException
 from app.repositories.inventory_repository import (
     BastionMapping,
-    BastionMappingRepository,
     ClusterNodeInfo,
-    ClusterNodeLookupRepository,
+    InventoryRepository,
 )
 
 
-class InMemoryClusterNodeLookupRepository(ClusterNodeLookupRepository):
-    def __init__(self, records: Dict[str, ClusterNodeInfo]):
-        self._records = records
+class InMemoryInventoryRepository(InventoryRepository):
+    def __init__(
+        self,
+        nodes: Dict[str, ClusterNodeInfo] | None = None,
+        mappings: Dict[str, List[BastionMapping]] | None = None,
+    ) -> None:
+        self._nodes = nodes or {}
+        self._mappings = mappings or {}
 
     async def lookup_by_name(self, node_name: str) -> ClusterNodeInfo:
-        info = self._records.get(node_name)
-        if info is None:
+        if node_name not in self._nodes:
             raise NotFoundException(
                 f"Node '{node_name}' not found.",
                 detail={"node_name": node_name},
             )
-        return info
-
-
-class InMemoryBastionMappingRepository(BastionMappingRepository):
-    def __init__(self, mappings_by_type: Dict[str, List[BastionMapping]]):
-        self._mappings_by_type = mappings_by_type
+        return self._nodes[node_name]
 
     async def list_mappings(self, type_name: str) -> List[BastionMapping]:
-        mappings = self._mappings_by_type.get(type_name)
+        mappings = self._mappings.get(type_name, [])
         if not mappings:
             raise NotFoundException(
                 f"No bastion mappings found for type '{type_name}'.",
                 detail={"type": type_name},
             )
         return mappings
+
+
+# Backward-compatible aliases — kept so that tests migrated incrementally
+# can still import these names. New tests should use InMemoryInventoryRepository directly.
+
+class InMemoryClusterNodeLookupRepository(InMemoryInventoryRepository):
+    """Alias for InMemoryInventoryRepository (node-lookup-only constructor)."""
+
+    def __init__(self, nodes: Dict[str, ClusterNodeInfo] | None = None) -> None:
+        super().__init__(nodes=nodes, mappings={})
+
+
+class InMemoryBastionMappingRepository(InMemoryInventoryRepository):
+    """Alias for InMemoryInventoryRepository (mapping-only constructor)."""
+
+    def __init__(self, mappings: Dict[str, List[BastionMapping]] | None = None) -> None:
+        super().__init__(nodes={}, mappings=mappings)

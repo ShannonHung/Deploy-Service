@@ -5,17 +5,13 @@ from fastapi.testclient import TestClient
 
 import app.services.command_service as svc_module
 from app.core.dependencies import (
-    get_bastion_mapping_repository,
-    get_cluster_node_lookup_repository,
     get_command_state_repository,
+    get_inventory_repository,
 )
 from app.main import create_app
 from app.repositories.inventory_repository import BastionMapping
 from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef, NodeInfo
-from tests.fixtures.cluster import (
-    InMemoryBastionMappingRepository,
-    InMemoryClusterNodeLookupRepository,
-)
+from tests.fixtures.cluster import InMemoryInventoryRepository
 from tests.integration.test_command_host_type import (
     _InMemoryCommandStateRepo,
     _get_token,
@@ -23,46 +19,45 @@ from tests.integration.test_command_host_type import (
 )
 
 
-def _cluster_node_lookup_repo():
-    return InMemoryClusterNodeLookupRepository({
-        "node1": ClusterNodeInfo(
-            node_type="baremetal",
-            node=NodeInfo(id="1", name="node1", labels={"mgmt_ip": "10.0.1.5/8", "router_id": "10.0.1.1"}),
-            cluster=ClusterRef(id="1", name="type1-cluster-c1"),
-        ),
-        "node2": ClusterNodeInfo(
-            # virtual-machine → maps to type2 via BASTION_NODE_TYPE_MAP
-            node_type="virtual-machine",
-            node=NodeInfo(id="2", name="node2", labels={}),
-            cluster=ClusterRef(id="2", name="type2-cluster-c1"),
-        ),
-        "node3": ClusterNodeInfo(
-            node_type="baremetal",
-            node=NodeInfo(id="3", name="node3", labels={}),
-            cluster=ClusterRef(id="3", name="orphan-cluster"),
-        ),
-    })
-
-
-def _mapping_repo():
-    return InMemoryBastionMappingRepository({
-        "type1": [
-            BastionMapping(
-                patterns=["type1-cluster-(c1|c2|c3)", "type1-cluster.*"],
-                runner="r1", bastion="b1", bastion_ip="10.1.1.1",
+def _inventory_repo():
+    return InMemoryInventoryRepository(
+        nodes={
+            "node1": ClusterNodeInfo(
+                node_type="baremetal",
+                node=NodeInfo(id="1", name="node1", labels={"mgmt_ip": "10.0.1.5/8", "router_id": "10.0.1.1"}),
+                cluster=ClusterRef(id="1", name="type1-cluster-c1"),
             ),
-            BastionMapping(
-                patterns=["type1-kind"], runner="r2", bastion="b2",
-                bastion_ip="10.1.1.2",
+            "node2": ClusterNodeInfo(
+                # virtual-machine → maps to type2 via BASTION_NODE_TYPE_MAP
+                node_type="virtual-machine",
+                node=NodeInfo(id="2", name="node2", labels={}),
+                cluster=ClusterRef(id="2", name="type2-cluster-c1"),
             ),
-        ],
-        "type2": [
-            BastionMapping(
-                patterns=["type2-cluster.*"], runner="r3", bastion="b3",
-                bastion_ip="10.2.2.2",
+            "node3": ClusterNodeInfo(
+                node_type="baremetal",
+                node=NodeInfo(id="3", name="node3", labels={}),
+                cluster=ClusterRef(id="3", name="orphan-cluster"),
             ),
-        ],
-    })
+        },
+        mappings={
+            "type1": [
+                BastionMapping(
+                    patterns=["type1-cluster-(c1|c2|c3)", "type1-cluster.*"],
+                    runner="r1", bastion="b1", bastion_ip="10.1.1.1",
+                ),
+                BastionMapping(
+                    patterns=["type1-kind"], runner="r2", bastion="b2",
+                    bastion_ip="10.1.1.2",
+                ),
+            ],
+            "type2": [
+                BastionMapping(
+                    patterns=["type2-cluster.*"], runner="r3", bastion="b3",
+                    bastion_ip="10.2.2.2",
+                ),
+            ],
+        },
+    )
 
 
 @pytest.fixture
@@ -74,8 +69,7 @@ def client_full(monkeypatch):
     )
     app = create_app()
     app.dependency_overrides[get_command_state_repository] = lambda: _InMemoryCommandStateRepo()
-    app.dependency_overrides[get_cluster_node_lookup_repository] = lambda: _cluster_node_lookup_repo()
-    app.dependency_overrides[get_bastion_mapping_repository] = lambda: _mapping_repo()
+    app.dependency_overrides[get_inventory_repository] = lambda: _inventory_repo()
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

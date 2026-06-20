@@ -4,31 +4,25 @@ from app.core.exceptions import CommandExecutionException, NotFoundException
 from app.repositories.inventory_repository import BastionMapping
 from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef, NodeInfo
 from app.repositories.host_resolver import ClusterBastionHostResolver
-from tests.fixtures.cluster import (
-    InMemoryBastionMappingRepository,
-    InMemoryClusterNodeLookupRepository,
-)
+from tests.fixtures.cluster import InMemoryInventoryRepository
 
 
 _DEFAULT_NODE_TYPE_MAP = {"baremetal": "type1", "virtual-machine": "type2"}
 
 
-def _node_lookup_repo(
-    cluster_name: str, node_type: str = "baremetal"
-) -> InMemoryClusterNodeLookupRepository:
-    return InMemoryClusterNodeLookupRepository(
-        {
+def _inventory_repo(
+    cluster_name: str, node_type: str = "baremetal", mappings_by_type=None
+) -> InMemoryInventoryRepository:
+    return InMemoryInventoryRepository(
+        nodes={
             "node1": ClusterNodeInfo(
                 node_type=node_type,
                 node=NodeInfo(id="1", name="node1", labels={"mgmt_ip": "10.0.1.5/8", "router_id": "10.0.1.1"}),
                 cluster=ClusterRef(id="1", name=cluster_name),
             )
-        }
+        },
+        mappings=mappings_by_type or {},
     )
-
-
-def _mapping_repo(mappings_by_type):
-    return InMemoryBastionMappingRepository(mappings_by_type)
 
 
 async def test_first_pattern_in_first_entry_wins():
@@ -49,8 +43,7 @@ async def test_first_pattern_in_first_entry_wins():
         ]
     }
     resolver = ClusterBastionHostResolver(
-        _node_lookup_repo("type1-cluster-c1"),
-        _mapping_repo(mappings),
+        _inventory_repo("type1-cluster-c1", mappings_by_type=mappings),
         node_type_map=_DEFAULT_NODE_TYPE_MAP,
     )
     resolved = await resolver.resolve("node1")
@@ -83,8 +76,7 @@ async def test_second_entry_priority_when_first_doesnt_match():
         ]
     }
     resolver = ClusterBastionHostResolver(
-        _node_lookup_repo("type1-kind"),
-        _mapping_repo(mappings),
+        _inventory_repo("type1-kind", mappings_by_type=mappings),
         node_type_map=_DEFAULT_NODE_TYPE_MAP,
     )
     resolved = await resolver.resolve("node1")
@@ -104,8 +96,7 @@ async def test_no_pattern_matches_raises_not_found():
         ]
     }
     resolver = ClusterBastionHostResolver(
-        _node_lookup_repo("type1-cluster-c99"),
-        _mapping_repo(mappings),
+        _inventory_repo("type1-cluster-c99", mappings_by_type=mappings),
         node_type_map=_DEFAULT_NODE_TYPE_MAP,
     )
     with pytest.raises(NotFoundException) as exc_info:
@@ -119,8 +110,7 @@ async def test_no_pattern_matches_raises_not_found():
 async def test_node_not_found_propagates():
     mappings = {"type1": [BastionMapping(patterns=[".*"], runner="r", bastion="b", bastion_ip="1.1.1.1")]}
     resolver = ClusterBastionHostResolver(
-        InMemoryClusterNodeLookupRepository({}),
-        _mapping_repo(mappings),
+        InMemoryInventoryRepository(nodes={}, mappings=mappings),
         node_type_map=_DEFAULT_NODE_TYPE_MAP,
     )
     with pytest.raises(NotFoundException):
@@ -141,8 +131,7 @@ async def test_fullmatch_boundary_dotstar():
     }
     for cluster in ["type1-cluster-c1", "type1-cluster", "type1-clusterX"]:
         resolver = ClusterBastionHostResolver(
-            _node_lookup_repo(cluster),
-            _mapping_repo(mappings),
+            _inventory_repo(cluster, mappings_by_type=mappings),
             node_type_map=_DEFAULT_NODE_TYPE_MAP,
         )
         resolved = await resolver.resolve("node1")
@@ -162,14 +151,12 @@ async def test_fullmatch_boundary_strict_alternation():
         ]
     }
     resolver = ClusterBastionHostResolver(
-        _node_lookup_repo("type1-cluster-c1"),
-        _mapping_repo(mappings),
+        _inventory_repo("type1-cluster-c1", mappings_by_type=mappings),
         node_type_map=_DEFAULT_NODE_TYPE_MAP,
     )
     assert (await resolver.resolve("node1")).ip == "10.0.0.1"
     resolver = ClusterBastionHostResolver(
-        _node_lookup_repo("type1-cluster-c99"),
-        _mapping_repo(mappings),
+        _inventory_repo("type1-cluster-c99", mappings_by_type=mappings),
         node_type_map=_DEFAULT_NODE_TYPE_MAP,
     )
     with pytest.raises(NotFoundException):
@@ -189,8 +176,7 @@ async def test_fullmatch_rejects_prefix_only_match():
         ]
     }
     resolver = ClusterBastionHostResolver(
-        _node_lookup_repo("type1-cluster-extra"),
-        _mapping_repo(mappings),
+        _inventory_repo("type1-cluster-extra", mappings_by_type=mappings),
         node_type_map=_DEFAULT_NODE_TYPE_MAP,
     )
     with pytest.raises(NotFoundException):
@@ -206,8 +192,7 @@ async def test_node_type_map_resolves_bastion_type_from_node_type():
         "type1": [BastionMapping(patterns=[".*"], runner="r", bastion="b", bastion_ip="10.1.0.1")],
     }
     resolver = ClusterBastionHostResolver(
-        _node_lookup_repo("any-cluster", node_type="baremetal"),
-        _mapping_repo(mappings),
+        _inventory_repo("any-cluster", node_type="baremetal", mappings_by_type=mappings),
         node_type_map=_DEFAULT_NODE_TYPE_MAP,
     )
     resolved = await resolver.resolve("node1")
@@ -222,8 +207,7 @@ async def test_node_type_map_selects_correct_type_per_node_type():
         "type2": [BastionMapping(patterns=[".*"], runner="r2", bastion="b2", bastion_ip="10.2.0.2")],
     }
     resolver = ClusterBastionHostResolver(
-        _node_lookup_repo("any-cluster", node_type="virtual-machine"),
-        _mapping_repo(mappings),
+        _inventory_repo("any-cluster", node_type="virtual-machine", mappings_by_type=mappings),
         node_type_map=_DEFAULT_NODE_TYPE_MAP,
     )
     resolved = await resolver.resolve("node1")
@@ -239,8 +223,7 @@ async def test_bastion_type_overrides_node_type_map():
     }
     # node_type=baremetal would map to type1, but bastion_type forces override-type
     resolver = ClusterBastionHostResolver(
-        _node_lookup_repo("any-cluster", node_type="baremetal"),
-        _mapping_repo(mappings),
+        _inventory_repo("any-cluster", node_type="baremetal", mappings_by_type=mappings),
         node_type_map=_DEFAULT_NODE_TYPE_MAP,
         bastion_type="override-type",
     )
@@ -255,8 +238,7 @@ async def test_unknown_node_type_raises_with_clear_message():
         "type1": [BastionMapping(patterns=[".*"], runner="r", bastion="b", bastion_ip="1.1.1.1")],
     }
     resolver = ClusterBastionHostResolver(
-        _node_lookup_repo("any-cluster", node_type="unknown-type"),
-        _mapping_repo(mappings),
+        _inventory_repo("any-cluster", node_type="unknown-type", mappings_by_type=mappings),
         node_type_map={"baremetal": "type1"},
     )
     with pytest.raises(CommandExecutionException) as exc_info:

@@ -67,10 +67,7 @@ def get_current_user(required_scopes: list[str] | None = None) -> Callable:
 from app.clients.inventory_client import InventoryClient, InventoryTokenManager
 from app.core.redis_client import RedisClient
 from app.repositories.command_state_repository import CommandStateRepository
-from app.repositories.inventory_repository import (
-    BastionMappingRepository,
-    ClusterNodeLookupRepository,
-)
+from app.repositories.inventory_repository import InventoryRepository
 from app.repositories.trace_cache_repository import (
     RedisTraceCache,
     TraceCacheRepository,
@@ -104,20 +101,15 @@ async def get_command_state_repository() -> CommandStateRepository:
     return CommandStateRepository(redis)
 
 
-async def get_cluster_node_lookup_repository() -> ClusterNodeLookupRepository:
-    return _build_inventory_client()
-
-
-async def get_bastion_mapping_repository() -> BastionMappingRepository:
+async def get_inventory_repository() -> InventoryRepository:
     return _build_inventory_client()
 
 
 async def get_command_service(
     repo: CommandStateRepository = Depends(get_command_state_repository),
-    cluster_node_lookup_repo: ClusterNodeLookupRepository = Depends(get_cluster_node_lookup_repository),
-    mapping_repo: BastionMappingRepository = Depends(get_bastion_mapping_repository),
+    inventory_repo: InventoryRepository = Depends(get_inventory_repository),
 ) -> CommandService:
-    return CommandService(repo, cluster_node_lookup_repo, mapping_repo)
+    return CommandService(repo, inventory_repo)
 
 
 async def get_trace_cache_repository() -> TraceCacheRepository:
