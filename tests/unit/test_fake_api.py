@@ -63,7 +63,7 @@ def test_mappings_known_type_returns_fixture(fake_app):
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["results"][0]["bastion"] == "type1-bastion"
+    assert body["results"][0]["data"][0]["bastion"] == "type1-bastion"
 
 
 def test_mappings_unknown_type_returns_empty(fake_app):
