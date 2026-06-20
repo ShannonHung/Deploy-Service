@@ -1,6 +1,16 @@
 {
   "node_type": "baremetal",
-  "node_name": "node1",
+  "node": {
+    "id": "123",
+    "name": "node1",
+    "labels": {
+      "dc": "1",
+      "mgmt_ip": "10.1.2.3/8",
+      "as_number": "12345",
+      "router_id": "10.2.3.4",
+      "rack_network": "GM"
+    }
+  },
   "cluster": {
     "id": "123",
     "name": "type1-cluster-c1"

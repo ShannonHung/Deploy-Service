@@ -12,6 +12,9 @@ Route layout:
   GET  /api/v1/deploy/stage/{id}           → Get pipeline status
   POST /api/v1/deploy/stage/{id}/cancel    → Cancel pipeline
   POST /api/v1/deploy/stage/{id}/retry     → Retry pipeline
+  GET  /api/v1/inventory/nodes/{node_name} → Cluster node lookup
+  GET  /api/v1/inventory/mappings          → Bastion-cluster mappings
+  GET  /api/v1/inventory/nodes/{node_name}/bastion-resolution → Node-to-bastion resolution
 """
 
 from __future__ import annotations
@@ -21,12 +24,14 @@ from fastapi import APIRouter
 from app.api.v1.auth import router as auth_router
 from app.api.v1.deploy import router as deploy_router
 from app.api.v1.command import router as command_router
+from app.api.v1.inventory import router as inventory_router
 
 # ── /api/v1 sub-router ────────────────────────────────────────────────────────
 v1_router = APIRouter(prefix="/api/v1")
-v1_router.include_router(auth_router)    # mounts at /api/v1/auth/...
-v1_router.include_router(deploy_router)  # mounts at /api/v1/deploy/...
-v1_router.include_router(command_router) # mounts at /api/v1/command/...
+v1_router.include_router(auth_router)      # mounts at /api/v1/auth/...
+v1_router.include_router(deploy_router)    # mounts at /api/v1/deploy/...
+v1_router.include_router(command_router)   # mounts at /api/v1/command/...
+v1_router.include_router(inventory_router) # mounts at /api/v1/inventory/...
 
 # ── Root router (aggregates everything) ───────────────────────────────────────
 api_router = APIRouter()

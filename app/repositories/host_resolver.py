@@ -18,11 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.core.exceptions import CommandExecutionException, NotFoundException
 from app.domain.command import HostType
-from app.repositories.inventory_repository import (
-    BastionMappingRepository,
-    ClusterNodeLookupRepository,
-    InventoryRepository,
-)
+from app.repositories.inventory_repository import InventoryRepository
 
 _logger = logging.getLogger(__name__)
 
@@ -44,15 +40,31 @@ class IpHostResolver(HostResolver):
 
 
 class HostnameHostResolver(HostResolver):
-    def __init__(self, inventory: InventoryRepository) -> None:
-        self._inventory = inventory
+    def __init__(
+        self,
+        inventory_repo: InventoryRepository,
+        ip_label: str,
+    ) -> None:
+        self._inventory_repo = inventory_repo
+        self._ip_label = ip_label
 
     async def resolve(self, raw_host: str) -> ResolvedHost:
-        info = await self._inventory.lookup(raw_host)
+        node_info = await self._inventory_repo.lookup_by_name(raw_host)
+        raw_ip = node_info.node.labels.get(self._ip_label)
+        if raw_ip is None:
+            raise CommandExecutionException(
+                f"Label '{self._ip_label}' not found in node labels for '{raw_host}'.",
+                detail={
+                    "node_name": raw_host,
+                    "ip_label": self._ip_label,
+                    "available_labels": list(node_info.node.labels.keys()),
+                },
+            )
+        ip = raw_ip.split("/")[0]
         return ResolvedHost(
-            ip=info.ip,
+            ip=ip,
             source_input=raw_host,
-            metadata={"hostname": info.hostname},
+            metadata={"node_name": raw_host, "ip_label": self._ip_label},
         )
 
 
@@ -65,18 +77,16 @@ class ClusterBastionHostResolver(HostResolver):
 
     def __init__(
         self,
-        cluster_node_lookup_repo: ClusterNodeLookupRepository,
-        mapping_repo: BastionMappingRepository,
+        inventory_repo: InventoryRepository,
         node_type_map: Dict[str, str],
         bastion_type: Optional[str] = None,
     ) -> None:
-        self._cluster_node_lookup_repo = cluster_node_lookup_repo
-        self._mapping_repo = mapping_repo
+        self._inventory_repo = inventory_repo
         self._node_type_map = node_type_map
         self._bastion_type = bastion_type
 
     async def resolve(self, raw_host: str) -> ResolvedHost:
-        node_info = await self._cluster_node_lookup_repo.lookup_by_name(raw_host)
+        node_info = await self._inventory_repo.lookup_by_name(raw_host)
         cluster_name = node_info.cluster.name
 
         if self._bastion_type:
@@ -93,7 +103,7 @@ class ClusterBastionHostResolver(HostResolver):
                     detail={"node_type": node_type, "node_type_map": self._node_type_map},
                 )
 
-        mappings = await self._mapping_repo.list_mappings(bastion_type)
+        mappings = await self._inventory_repo.list_mappings(bastion_type)
 
         for mapping in mappings:
             for pattern in mapping.patterns:
@@ -133,24 +143,21 @@ class ClusterBastionHostResolver(HostResolver):
 def create_host_resolver(
     host_type: HostType,
     *,
-    inventory: Optional[InventoryRepository] = None,
-    cluster_node_lookup_repo: Optional[ClusterNodeLookupRepository] = None,
-    mapping_repo: Optional[BastionMappingRepository] = None,
+    inventory_repo: Optional[InventoryRepository] = None,
     node_type_map: Optional[Dict[str, str]] = None,
     bastion_type: Optional[str] = None,
+    ip_label: Optional[str] = None,
 ) -> HostResolver:
     if host_type == HostType.IP:
         return IpHostResolver()
     if host_type == HostType.HOSTNAME:
-        if inventory is None:
-            raise ValueError("HOSTNAME resolver requires inventory")
-        return HostnameHostResolver(inventory)
+        if inventory_repo is None or ip_label is None:
+            raise ValueError("HOSTNAME resolver requires inventory_repo and ip_label")
+        return HostnameHostResolver(inventory_repo, ip_label)
     if host_type == HostType.BASTION:
-        if cluster_node_lookup_repo is None or mapping_repo is None or node_type_map is None:
+        if inventory_repo is None or node_type_map is None:
             raise ValueError(
-                "BASTION resolver requires cluster_node_lookup_repo, mapping_repo, node_type_map"
+                "BASTION resolver requires inventory_repo and node_type_map"
             )
-        return ClusterBastionHostResolver(
-            cluster_node_lookup_repo, mapping_repo, node_type_map, bastion_type
-        )
+        return ClusterBastionHostResolver(inventory_repo, node_type_map, bastion_type)
     raise ValueError(f"Unsupported host_type: {host_type}")

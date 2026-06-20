@@ -71,9 +71,12 @@ class Settings(BaseSettings):
     INVENTORY_API_URL: str = "http://localhost:9001"
     INVENTORY_API_TOKEN: str = "fake-inventory-token"
     INVENTORY_API_TIMEOUT_SECONDS: float = 5.0
+    INVENTORY_API_VERIFY_SSL: bool = True
     # JSON string mapping node_type → bastion_type, e.g.:
     # BASTION_NODE_TYPE_MAP='{"baremetal": "type1", "virtual-machine": "type2"}'
     BASTION_NODE_TYPE_MAP: Dict[str, str] = {}
+    # Node label key used to extract the SSH target IP for HOSTNAME host_type.
+    INVENTORY_IP_LABEL: str = "mgmt_ip"
 
     # ── Redis ─────────────────────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"

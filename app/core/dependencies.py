@@ -64,20 +64,38 @@ def get_current_user(required_scopes: list[str] | None = None) -> Callable:
 
     return _dependency
 
+from app.clients.inventory_client import InventoryClient, InventoryTokenManager
 from app.core.redis_client import RedisClient
 from app.repositories.command_state_repository import CommandStateRepository
-from app.repositories.inventory_repository import (
-    BastionMappingRepository,
-    ClusterNodeLookupRepository,
-    HttpInventoryRepository,
-    InventoryRepository,
-)
+from app.repositories.inventory_repository import InventoryRepository
 from app.repositories.trace_cache_repository import (
     RedisTraceCache,
     TraceCacheRepository,
 )
 from app.services.command_service import CommandService
+from app.services.inventory_service import InventoryService
 from app.core.config import get_settings
+
+_inventory_token_manager: InventoryTokenManager | None = None
+
+
+def _get_inventory_token_manager() -> InventoryTokenManager:
+    global _inventory_token_manager
+    if _inventory_token_manager is None:
+        s = get_settings()
+        _inventory_token_manager = InventoryTokenManager(api_key=s.INVENTORY_API_TOKEN)
+    return _inventory_token_manager
+
+
+def _build_inventory_client() -> InventoryClient:
+    s = get_settings()
+    return InventoryClient(
+        base_url=s.INVENTORY_API_URL,
+        token_manager=_get_inventory_token_manager(),
+        timeout=s.INVENTORY_API_TIMEOUT_SECONDS,
+        verify_ssl=s.INVENTORY_API_VERIFY_SSL,
+    )
+
 
 async def get_command_state_repository() -> CommandStateRepository:
     redis = await RedisClient.get_client()
@@ -85,29 +103,21 @@ async def get_command_state_repository() -> CommandStateRepository:
 
 
 async def get_inventory_repository() -> InventoryRepository:
+    return _build_inventory_client()
+
+
+async def get_inventory_service(
+    repo: InventoryRepository = Depends(get_inventory_repository),
+) -> InventoryService:
     s = get_settings()
-    return HttpInventoryRepository(
-        base_url=s.INVENTORY_API_URL,
-        token=s.INVENTORY_API_TOKEN,
-        timeout_seconds=s.INVENTORY_API_TIMEOUT_SECONDS,
-    )
-
-
-async def get_cluster_node_lookup_repository() -> ClusterNodeLookupRepository:
-    return await get_inventory_repository()
-
-
-async def get_bastion_mapping_repository() -> BastionMappingRepository:
-    return await get_inventory_repository()
+    return InventoryService(repo=repo, node_type_map=s.BASTION_NODE_TYPE_MAP)
 
 
 async def get_command_service(
     repo: CommandStateRepository = Depends(get_command_state_repository),
-    inventory: InventoryRepository = Depends(get_inventory_repository),
-    cluster_node_lookup_repo: ClusterNodeLookupRepository = Depends(get_cluster_node_lookup_repository),
-    mapping_repo: BastionMappingRepository = Depends(get_bastion_mapping_repository),
+    inventory_repo: InventoryRepository = Depends(get_inventory_repository),
 ) -> CommandService:
-    return CommandService(repo, inventory, cluster_node_lookup_repo, mapping_repo)
+    return CommandService(repo, inventory_repo)
 
 
 async def get_trace_cache_repository() -> TraceCacheRepository:

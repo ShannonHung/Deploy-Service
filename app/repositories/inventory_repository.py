@@ -1,12 +1,10 @@
 """Inventory API repository.
 
 Single HTTP client for all inventory service endpoints:
-  - GET /inventory/hosts/{hostname}
   - GET /api/v1/k8s-clusters/node-cluster-lookup?node_name={name}
   - GET /api/v1/bastion-cluster-mappings?name={name}
 
 Contract per endpoint:
-  - lookup_host:      200 → InventoryHostInfo; 404 → NotFoundException
   - lookup_by_name:   200 → ClusterNodeInfo;   404 → NotFoundException
   - list_mappings:    200 + exactly 1 result → list[BastionMapping] from result["data"]
                       200 + 0 results → NotFoundException
@@ -18,10 +16,10 @@ Contract per endpoint:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Dict, List, Literal, Optional
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.exceptions import (
     NotFoundException,
@@ -32,25 +30,20 @@ from app.core.exceptions import (
 
 # ── Models ────────────────────────────────────────────────────────────────────
 
-class InventoryBastion(BaseModel):
-    hostname: str
-    ip: str
-
-
-class InventoryHostInfo(BaseModel):
-    hostname: str
-    ip: str
-    bastion: InventoryBastion
-
-
 class ClusterRef(BaseModel):
     id: str
     name: str
 
 
+class NodeInfo(BaseModel):
+    id: str
+    name: str
+    labels: Dict[str, str] = Field(default_factory=dict)
+
+
 class ClusterNodeInfo(BaseModel):
     node_type: str
-    node_name: str
+    node: NodeInfo
     cluster: ClusterRef
 
 
@@ -61,24 +54,23 @@ class BastionMapping(BaseModel):
     bastion_ip: str
 
 
+class NodeBastionResolution(BaseModel):
+    node_type: str
+    node: NodeInfo
+    cluster: ClusterRef
+    bastion_type: str
+    bastion_type_source: Literal["config", "query_param"]
+    matched_mapping: BastionMapping
+    matched_pattern: str
+
+
 # ── Abstract interfaces ───────────────────────────────────────────────────────
 
 class InventoryRepository(ABC):
-    """Look up a host record by hostname."""
-
-    @abstractmethod
-    async def lookup(self, hostname: str) -> InventoryHostInfo: ...
-
-
-class ClusterNodeLookupRepository(ABC):
-    """Look up the cluster a node belongs to."""
+    """Unified inventory service interface: node lookup + bastion mapping."""
 
     @abstractmethod
     async def lookup_by_name(self, node_name: str) -> ClusterNodeInfo: ...
-
-
-class BastionMappingRepository(ABC):
-    """List bastion-cluster mappings for a given type."""
 
     @abstractmethod
     async def list_mappings(self, type_name: str) -> List[BastionMapping]: ...
@@ -86,9 +78,7 @@ class BastionMappingRepository(ABC):
 
 # ── HTTP implementation ───────────────────────────────────────────────────────
 
-class HttpInventoryRepository(
-    InventoryRepository, ClusterNodeLookupRepository, BastionMappingRepository
-):
+class HttpInventoryRepository(InventoryRepository):
     """Single httpx client implementing all three inventory API interfaces."""
 
     def __init__(
@@ -110,40 +100,7 @@ class HttpInventoryRepository(
             transport=self._transport,
         )
 
-    # ── InventoryRepository ───────────────────────────────────────────────────
-
-    async def lookup(self, hostname: str) -> InventoryHostInfo:
-        try:
-            async with self._client() as client:
-                resp = await client.get(
-                    f"/inventory/hosts/{hostname}",
-                    headers={"Authorization": f"Token {self._token}"},
-                )
-        except httpx.TimeoutException as exc:
-            raise UpstreamTimeoutException(
-                f"Inventory lookup for '{hostname}' timed out after {self._timeout}s.",
-                detail={"hostname": hostname},
-            ) from exc
-        except httpx.RequestError as exc:
-            raise UpstreamUnavailableException(
-                f"Inventory lookup for '{hostname}' failed: {exc}",
-                detail={"hostname": hostname},
-            ) from exc
-
-        if resp.status_code == 404:
-            raise NotFoundException(
-                f"Host '{hostname}' not found in inventory.",
-                detail={"hostname": hostname},
-            )
-        if resp.status_code >= 400:
-            raise UpstreamUnavailableException(
-                f"Inventory returned {resp.status_code} for '{hostname}'.",
-                detail={"hostname": hostname, "status_code": resp.status_code},
-            )
-
-        return InventoryHostInfo.model_validate(resp.json())
-
-    # ── ClusterNodeLookupRepository ───────────────────────────────────────────
+    # ── InventoryRepository methods ──────────────────────────────────────────
 
     async def lookup_by_name(self, node_name: str) -> ClusterNodeInfo:
         try:
@@ -190,8 +147,6 @@ class HttpInventoryRepository(
                 f"Cluster node lookup API returned unexpected payload shape for '{node_name}'.",
                 detail={"node_name": node_name},
             )
-
-    # ── BastionMappingRepository ──────────────────────────────────────────────
 
     async def list_mappings(self, type_name: str) -> List[BastionMapping]:
         try:
