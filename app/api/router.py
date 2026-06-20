@@ -14,6 +14,7 @@ Route layout:
   POST /api/v1/deploy/stage/{id}/retry     → Retry pipeline
   GET  /api/v1/inventory/nodes/{node_name} → Cluster node lookup
   GET  /api/v1/inventory/mappings          → Bastion-cluster mappings
+  GET  /api/v1/inventory/nodes/{node_name}/bastion-resolution → Node-to-bastion resolution
 """
 
 from __future__ import annotations

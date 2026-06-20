@@ -2,6 +2,7 @@
 
 GET /api/v1/inventory/nodes/{node_name}  → ClusterNodeInfo
 GET /api/v1/inventory/mappings           → list[BastionMapping]  (?type=<type>)
+GET /api/v1/inventory/nodes/{node_name}/bastion-resolution  → NodeBastionResolution
 
 All endpoints require command_api scope.
 """

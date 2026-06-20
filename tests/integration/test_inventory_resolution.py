@@ -104,6 +104,7 @@ def test_resolution_with_bastion_type_override(resolution_client):
             params={"bastion_type": "override-type"},
             headers={"Authorization": f"Bearer {token}"},
         )
+    app.dependency_overrides.clear()
     assert resp.status_code == 200, resp.text
     data = resp.json()["data"]
     assert data["bastion_type"] == "override-type"
@@ -154,7 +155,35 @@ def test_resolution_no_pattern_match_returns_404(resolution_client):
             "/api/v1/inventory/nodes/node1/bastion-resolution",
             headers={"Authorization": f"Bearer {token}"},
         )
+    app.dependency_overrides.clear()
     assert resp.status_code == 404, resp.text
+
+
+def test_resolution_unknown_node_type_returns_400(resolution_client):
+    unknown_type_repo = InMemoryInventoryRepository(
+        nodes={
+            "node1": ClusterNodeInfo(
+                node_type="unknown-type",
+                node=NodeInfo(id="1", name="node1", labels={}),
+                cluster=ClusterRef(id="1", name="any-cluster"),
+            )
+        },
+        mappings={},
+    )
+    app = create_app()
+    app.dependency_overrides[get_inventory_repository] = lambda: unknown_type_repo
+    app.dependency_overrides[get_inventory_service] = lambda: InventoryService(
+        repo=unknown_type_repo, node_type_map=_NODE_TYPE_MAP
+    )
+    with TestClient(app) as c:
+        token = _get_token(c)
+        resp = c.get(
+            "/api/v1/inventory/nodes/node1/bastion-resolution",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    app.dependency_overrides.clear()
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["error"]["code"] == "COMMAND_EXECUTION_ERROR"
 
 
 def test_resolution_no_token_returns_401(resolution_client):

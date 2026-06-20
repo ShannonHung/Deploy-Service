@@ -44,7 +44,7 @@ class InventoryService:
                     f"node_type '{node_type}' has no bastion mapping. "
                     f"Known mappings: {{{known}}}. "
                     "Update BASTION_NODE_TYPE_MAP to include this node_type.",
-                    detail={"node_type": node_type, "node_type_map": self._node_type_map},
+                    detail={"node_type": node_type},
                 )
             bastion_type_source = "config"
 
