@@ -73,6 +73,7 @@ from app.repositories.trace_cache_repository import (
     TraceCacheRepository,
 )
 from app.services.command_service import CommandService
+from app.services.inventory_service import InventoryService
 from app.core.config import get_settings
 
 _inventory_token_manager: InventoryTokenManager | None = None
@@ -103,6 +104,13 @@ async def get_command_state_repository() -> CommandStateRepository:
 
 async def get_inventory_repository() -> InventoryRepository:
     return _build_inventory_client()
+
+
+async def get_inventory_service(
+    repo: InventoryRepository = Depends(get_inventory_repository),
+) -> InventoryService:
+    s = get_settings()
+    return InventoryService(repo=repo, node_type_map=s.BASTION_NODE_TYPE_MAP)
 
 
 async def get_command_service(
