@@ -94,3 +94,31 @@ async def test_lookup_malformed_payload_raises_upstream_unavailable():
     repo = _repo(lambda r: httpx.Response(200, json={"data": {}}))
     with pytest.raises(UpstreamUnavailableException):
         await repo.lookup_by_name("x")
+
+
+async def test_lookup_null_labels_defaults_to_empty_dict():
+    """node.labels: null in API response must be treated as an empty dict."""
+    repo = _repo(lambda r: httpx.Response(
+        200,
+        json={
+            "node_type": "baremetal",
+            "node": {"id": "1", "name": "node1", "labels": None},
+            "cluster": {"id": "123", "name": "cluster1"},
+        },
+    ))
+    info = await repo.lookup_by_name("node1")
+    assert info.node.labels == {}
+
+
+async def test_lookup_missing_labels_defaults_to_empty_dict():
+    """node.labels key absent in API response must be treated as an empty dict."""
+    repo = _repo(lambda r: httpx.Response(
+        200,
+        json={
+            "node_type": "baremetal",
+            "node": {"id": "1", "name": "node1"},
+            "cluster": {"id": "123", "name": "cluster1"},
+        },
+    ))
+    info = await repo.lookup_by_name("node1")
+    assert info.node.labels == {}
