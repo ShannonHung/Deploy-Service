@@ -19,7 +19,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Literal, Optional
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.exceptions import (
     NotFoundException,
@@ -39,6 +39,11 @@ class NodeInfo(BaseModel):
     id: str
     name: str
     labels: Dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("labels", mode="before")
+    @classmethod
+    def _coerce_null_labels(cls, v: object) -> object:
+        return v if v is not None else {}
 
 
 class ClusterNodeInfo(BaseModel):
