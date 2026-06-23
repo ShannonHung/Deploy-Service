@@ -33,6 +33,8 @@ LIMIT=""
 EXTRA_VARS=""
 PULL=1                  # docker pull before run; --no-pull disables (for local-built images)
 LOG_DIR="$(pwd)/logs"
+RUN_ID=""               # per-run id from deploy-service; when set, log file is <run_id>.log
+LOG_RETENTION_DAYS=3    # self-cleaning: prune <log-dir>/*.log older than this many days
 SSH_KEY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/data/ssh_keys/client_key"
 
 usage() {
@@ -52,6 +54,10 @@ Options:
   --image <name>          Runner image (default: shannonhung/ansible-runner:latest)
   --no-pull               Skip `docker pull` (use a locally-built image)
   --log-dir <path>        Host dir to mount for logs (default: ./logs)
+  --run-id <id>           Per-run id; log is written to <log-dir>/<id>.log
+                          (must match ^[A-Za-z0-9_-]+$). Unset → run.log.
+  --log-retention-days <n>  Delete <log-dir>/*.log older than n days at start
+                            of each run (default: 3; 0 disables cleanup)
   --ssh-key <path>        SSH private key to mount (default: ../data/ssh_keys/client_key)
   -h, --help              Show this help
 
@@ -75,6 +81,8 @@ while [[ $# -gt 0 ]]; do
     --image)          IMAGE="$2"; shift 2 ;;
     --no-pull)        PULL=0; shift ;;
     --log-dir)        LOG_DIR="$2"; shift 2 ;;
+    --run-id)         RUN_ID="$2"; shift 2 ;;
+    --log-retention-days) LOG_RETENTION_DAYS="$2"; shift 2 ;;
     --ssh-key)        SSH_KEY="$2"; shift 2 ;;
     -h|--help)        usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
@@ -89,6 +97,43 @@ fi
 if [[ ! -f "$SSH_KEY" ]]; then
   echo "Error: ssh key not found: $SSH_KEY" >&2
   exit 2
+fi
+
+# ── Per-run log file + self-cleaning ──────────────────────────────────────────
+# RUN_ID is supplied by deploy-service (a UUID) and becomes a filename, so we
+# validate it strictly. An empty RUN_ID keeps the legacy single-file behaviour
+# (run.log) for standalone use.
+if [[ -n "$RUN_ID" ]]; then
+  if [[ ! "$RUN_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "Error: --run-id must match ^[A-Za-z0-9_-]+$" >&2
+    exit 2
+  fi
+  LOG_FILE="$LOG_DIR/$RUN_ID.log"
+else
+  LOG_FILE="$LOG_DIR/run.log"
+fi
+
+# Validate retention is a non-negative integer.
+if [[ ! "$LOG_RETENTION_DAYS" =~ ^[0-9]+$ ]]; then
+  echo "Error: --log-retention-days must be a non-negative integer." >&2
+  exit 2
+fi
+
+mkdir -p "$LOG_DIR"
+
+# Self-cleaning: prune old run logs BEFORE starting work, so a long-running or
+# killed run never skips cleanup. Guarded so an empty/undefined LOG_DIR can
+# never widen the delete scope. Concurrent runs are safe: only files older than
+# the window are removed, never the in-flight <run_id>.log. 0 disables cleanup.
+if [[ "$LOG_RETENTION_DAYS" -gt 0 && -n "$LOG_DIR" && -d "$LOG_DIR" ]]; then
+  find "$LOG_DIR" -maxdepth 1 -type f -name '*.log' -mtime "+$LOG_RETENTION_DAYS" -delete 2>/dev/null || true
+fi
+
+# Test/inspection hook: print the resolved log path and exit before any docker
+# or git work. Used by the script's unit test (no network/docker required).
+if [[ "${DRYRUN:-0}" == "1" ]]; then
+  echo "DRYRUN log file: $LOG_FILE"
+  exit 0
 fi
 
 # ── Fresh inventory clone (deleted on exit, always latest) ─────────────────────
@@ -122,8 +167,6 @@ if [[ ! -f "$CLONE_DIR/$INVENTORY" ]]; then
   exit 2
 fi
 
-mkdir -p "$LOG_DIR"
-
 # ── Always-latest image ───────────────────────────────────────────────────────
 if [[ "$PULL" -eq 1 ]]; then
   echo ">> Pulling latest image: $IMAGE"
@@ -141,7 +184,7 @@ CMD_ARGS=(ansible-playbook -i "/inventory/$INVENTORY" "/playbooks/$PLAYBOOK")
 [[ -n "$EXTRA_VARS" ]] && CMD_ARGS+=(--extra-vars "$EXTRA_VARS")
 
 echo ">> Running: ${CMD_ARGS[*]}"
-echo ">> Logs:    $LOG_DIR/run.log (tee'd from stdout)"
+echo ">> Logs:    $LOG_FILE (tee'd from stdout)"
 
 # --add-host host.docker.internal:host-gateway lets the container reach the
 # host-published SSH ports (node1=2222, node2=2223) on Linux too (it's implicit
@@ -157,4 +200,4 @@ docker run --rm \
   -e ANSIBLE_PRIVATE_KEY_FILE=/root/.ssh/id_key \
   -e ANSIBLE_COLLECTIONS_PATH=/collections \
   "$IMAGE" \
-  "${CMD_ARGS[@]}" 2>&1 | tee "$LOG_DIR/run.log"
+  "${CMD_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
