@@ -1,30 +1,35 @@
-# Ansible runner image.
+# Ansible runner image — mirrors the company's pre-baked image.
 #
-# Mimics the company's pre-baked image: ansible-core + collections from
-# requirements.yml are installed at build time, and the playbooks + ansible.cfg
-# are baked in. At runtime the inventory is bind-mounted in and the log dir is
-# bind-mounted out (see run-ansible.sh).
-FROM python:3.12-slim
+# Shape we're imitating:
+#   * Plain Ubuntu with ansible installed, nothing fancy.
+#   * Everything lives at the root: /ansible.cfg, /playbooks, /collections.
+#     /inventory is supplied at run time (bind-mounted over this path).
+#   * NO ENTRYPOINT — the container runs whatever command run-ansible.sh passes
+#     (e.g. `ansible-playbook ...`) and exits when it finishes.
+#   * Does NOT write an ansible log file; output goes to stdout and the runner
+#     tees it to the host (see run-ansible.sh).
+FROM ubuntu:24.04
 
-# openssh-client: needed for ansible's ssh connection plugin.
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ansible + openssh-client (for the ssh connection plugin). pipx/pip via apt to
+# keep it close to a "plain ubuntu with the tools installed" image.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends openssh-client && \
+    apt-get install -y --no-install-recommends \
+        ansible \
+        openssh-client \
+        ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir ansible-core
+WORKDIR /
 
-WORKDIR /ansible
+# Collections at /collections (ANSIBLE_COLLECTIONS_PATH is set at run time so we
+# don't have to touch /ansible.cfg).
+COPY requirements.yml /requirements.yml
+RUN ansible-galaxy collection install -r /requirements.yml -p /collections
 
-# Install collections first so this layer is cached independently of playbooks.
-COPY requirements.yml ./requirements.yml
-RUN ansible-galaxy collection install -r requirements.yml
+# Config + playbooks baked at root, as in the company image.
+COPY ansible.cfg /ansible.cfg
+COPY playbooks /playbooks
 
-COPY ansible.cfg ./ansible.cfg
-COPY playbooks ./playbooks
-
-# ansible.cfg points ANSIBLE_LOG_PATH here; the dir is bind-mounted out at run time.
-RUN mkdir -p /var/log/ansible
-
-# Default command is overridden by run-ansible.sh, but a bare `docker run` shows help.
-ENTRYPOINT ["ansible-playbook"]
-CMD ["--help"]
+# No ENTRYPOINT and no long-running CMD: the container does one job and exits.

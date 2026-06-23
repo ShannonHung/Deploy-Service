@@ -12,11 +12,25 @@ run-ansible.sh -> clone inventory -> docker pull image -> ansible-playbook -> SS
 
 | File | Purpose |
 |------|---------|
-| `Dockerfile` | Builds the runner image: `ansible-core` + collections from `requirements.yml`, with `ansible.cfg` + `playbooks/` baked in. Mirrors the company's pre-baked image. |
-| `ansible.cfg` | `host_key_checking=false`, logs to `/var/log/ansible/run.log`. |
-| `requirements.yml` | Collections installed at build time (placeholder: `ansible.posix`). |
+| `Dockerfile` | Builds the runner image: plain **Ubuntu + ansible**, with `/ansible.cfg`, `/playbooks`, `/collections` baked at root and **no ENTRYPOINT** (mirrors the company image — runs one command and exits). |
+| `ansible.cfg` | `host_key_checking=false` + non-interactive SSH args. **No `log_path`** — the image doesn't write a log file. |
+| `requirements.yml` | Collections installed at build time to `/collections` (placeholder: `ansible.posix`). |
 | `playbooks/ping.yml` | Runs `ansible.builtin.ping` against the `nodes` group. |
-| `run-ansible.sh` | Clones inventory fresh, pulls the image, runs the playbook, cleans up. |
+| `run-ansible.sh` | Clones inventory fresh, pulls the image, runs `ansible-playbook` explicitly, tees stdout to `./logs/run.log`, cleans up. |
+
+### Image model (matches the company image)
+
+The image is plain Ubuntu with ansible installed and everything at the root:
+`/ansible.cfg`, `/playbooks`, `/collections`. There is **no ENTRYPOINT** — the
+container runs whatever command the runner passes (`ansible-playbook ...`) and
+exits. It does **not** write an ansible log file; `run-ansible.sh` captures the
+container's stdout and `tee`s it to the host (`./logs/run.log`). Collections are
+found via `ANSIBLE_COLLECTIONS_PATH=/collections`, set at run time so the baked
+`/ansible.cfg` doesn't need editing.
+
+> **ansible default log location:** with no `log_path` in `ansible.cfg` and no
+> `ANSIBLE_LOG_PATH` env var, ansible writes **no log file at all** — output goes
+> only to stdout. That's why logs are captured by tee, not mounted out.
 
 ## "Always latest" behavior
 

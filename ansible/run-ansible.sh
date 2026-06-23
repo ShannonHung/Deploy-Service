@@ -119,25 +119,31 @@ if [[ "$PULL" -eq 1 ]]; then
   docker pull "$IMAGE"
 fi
 
-# ── Build the ansible-playbook argument vector (discrete args, no eval) ────────
-# Inventory repo is mounted to /inventory, so the in-container path is
-# /inventory/<relative path>.
-ANSIBLE_ARGS=(-i "/inventory/$INVENTORY" "playbooks/$PLAYBOOK")
-[[ -n "$TAGS"       ]] && ANSIBLE_ARGS+=(--tags "$TAGS")
-[[ -n "$LIMIT"      ]] && ANSIBLE_ARGS+=(--limit "$LIMIT")
-[[ -n "$EXTRA_VARS" ]] && ANSIBLE_ARGS+=(--extra-vars "$EXTRA_VARS")
+# ── Build the full command (discrete args, no eval) ───────────────────────────
+# The image has NO ENTRYPOINT (it's a plain ubuntu+ansible image), so we pass
+# the executable explicitly. Everything is baked at root in the company image:
+#   /ansible.cfg  /playbooks  /collections
+# and the fresh inventory clone is mounted over /inventory.
+CMD_ARGS=(ansible-playbook -i "/inventory/$INVENTORY" "/playbooks/$PLAYBOOK")
+[[ -n "$TAGS"       ]] && CMD_ARGS+=(--tags "$TAGS")
+[[ -n "$LIMIT"      ]] && CMD_ARGS+=(--limit "$LIMIT")
+[[ -n "$EXTRA_VARS" ]] && CMD_ARGS+=(--extra-vars "$EXTRA_VARS")
 
-echo ">> Running: ansible-playbook ${ANSIBLE_ARGS[*]}"
-echo ">> Logs:    $LOG_DIR/run.log"
+echo ">> Running: ${CMD_ARGS[*]}"
+echo ">> Logs:    $LOG_DIR/run.log (tee'd from stdout)"
 
 # --add-host host.docker.internal:host-gateway lets the container reach the
 # host-published SSH ports (node1=2222, node2=2223) on Linux too (it's implicit
 # on Docker Desktop / macOS).
+#
+# The company image doesn't write an ansible log file, so we capture the
+# container's stdout/stderr and tee it to the host. `set -o pipefail` (above)
+# ensures a non-zero ansible exit still propagates through the tee.
 docker run --rm \
   --add-host host.docker.internal:host-gateway \
   -v "$CLONE_DIR":/inventory:ro \
-  -v "$LOG_DIR":/var/log/ansible \
   -v "$SSH_KEY":/root/.ssh/id_key:ro \
   -e ANSIBLE_PRIVATE_KEY_FILE=/root/.ssh/id_key \
+  -e ANSIBLE_COLLECTIONS_PATH=/collections \
   "$IMAGE" \
-  "${ANSIBLE_ARGS[@]}"
+  "${CMD_ARGS[@]}" 2>&1 | tee "$LOG_DIR/run.log"
