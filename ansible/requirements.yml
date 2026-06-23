@@ -1,0 +1,5 @@
+# Ansible collections baked into the image at build time.
+# In the real company image this list is larger; ansible.posix is enough to
+# prove the `ansible-galaxy collection install -r requirements.yml` step works.
+collections:
+  - name: ansible.posix
