@@ -54,9 +54,17 @@ class CommandState(BaseModel):
         self.exit_code = exit_code
         self.output = output
 
-    def mark_failed(self, message: str):
+    def mark_failed(self, message: str, exit_code: Optional[int] = None, output: Optional[str] = None):
         self.status = CommandStatus.FAILED
         self.message = message
+        # Keep exit_code/output when the failure came from a finished process
+        # (e.g. a non-zero ansible exit), so the poll endpoint can show WHY it
+        # failed instead of null/null. They stay None for failures with no
+        # process result (capacity rejection, SSH error, etc.).
+        if exit_code is not None:
+            self.exit_code = exit_code
+        if output is not None:
+            self.output = output
 
     def mark_killing(self, message: str):
         self.status = CommandStatus.KILLING

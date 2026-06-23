@@ -14,6 +14,11 @@
 # The `host` here is the control_node (we SSH INTO it). ssh_config=control_node
 # selects data/SSH-control_node.json (port 2224). The script then SSHes onward
 # to node1/node2 itself.
+#
+# Playbooks baked into the image (ansible/playbooks/, COPY'd in at build time):
+#   * ping.yml — pings every host; the happy path.
+#   * fail.yml — pings (ok) then runs /bin/false so the play fails. Used by the
+#     run_ansible_fail request below to verify a non-zero exit_status surfaces.
 ###############################################################################
 
 @base_url = http://localhost:8001
@@ -93,6 +98,28 @@ Content-Type: application/json
     "arguments": {
         "inventory": "taipei/bm_multinode.ini",
         "limit": "node2"
+    }
+}
+
+### Run the deliberately-FAILING playbook (ping ok, then /bin/false)
+# Use this to confirm a non-zero ansible exit propagates back as status=failed.
+# run-ansible.sh exits 2; the play recap shows failed=1 on every host.
+# @name my_command
+POST {{base_url}}/api/v1/command/execution
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "command_name": "run_ansible_fail",
+    "host": "localhost",
+    "port": 2224,
+    "username": "root",
+    "ssh_config": "control_node",
+    "option": {
+        "timeout_seconds": 300
+    },
+    "arguments": {
+        "inventory": "taipei/multinode.ini"
     }
 }
 

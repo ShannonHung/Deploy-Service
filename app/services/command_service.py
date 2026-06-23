@@ -408,7 +408,7 @@ class CommandService:
             if response.status == CommandStatus.SUCCESS.value:
                 state.mark_success(response.exit_status or 0, response.output or "")
             else:
-                state.mark_failed(response.message or "")
+                state.mark_failed(response.message or "", exit_code=response.exit_status, output=response.output)
         
         # SAFETY: Only update outcome if the current state is still RUNNING.
         # If it's KILLING or KILLED, it means the command was aborted or killed externally.
