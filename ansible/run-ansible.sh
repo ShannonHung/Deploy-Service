@@ -19,7 +19,9 @@
 set -euo pipefail
 
 # ── Fixed config (not user-overridable by design) ─────────────────────────────
-INVENTORY_REPO="https://gitlab.com/ShannonHung/my-ansible-inventory.git"
+# Fixed inventory repo. INVENTORY_REPO env var can override it for local testing
+# (e.g. a file:// path before it's pushed to GitLab); leave unset in production.
+INVENTORY_REPO="${INVENTORY_REPO:-https://gitlab.com/ShannonHung/my-ansible-inventory.git}"
 IMAGE="shannonhung/ansible-runner:latest"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
@@ -90,7 +92,16 @@ if [[ ! -f "$SSH_KEY" ]]; then
 fi
 
 # ── Fresh inventory clone (deleted on exit, always latest) ─────────────────────
-CLONE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ansible-inventory.XXXXXX")"
+# DooD note: the clone dir is later bind-mounted into the ansible container via
+# `docker run -v "$CLONE_DIR":/inventory`. When this script runs inside a
+# control_node (Docker-out-of-Docker), that -v resolves on the HOST daemon, so
+# $CLONE_DIR must be a path the HOST can see. We therefore clone into a dir
+# beside this script (which is mounted host-consistently), NOT control_node's
+# private /tmp. Override with CLONE_PARENT if needed.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLONE_PARENT="${CLONE_PARENT:-$SCRIPT_DIR/.run-tmp}"
+mkdir -p "$CLONE_PARENT"
+CLONE_DIR="$(mktemp -d "$CLONE_PARENT/ansible-inventory.XXXXXX")"
 cleanup() {
   rm -rf "$CLONE_DIR"
 }

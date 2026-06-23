@@ -1,0 +1,109 @@
+###############################################################################
+# Ansible via the SSH execution API.
+#
+# Flow: deploy-service --SSH--> control_node --run-ansible.sh--> docker run
+#       ansible image --SSH--> node1/node2.
+#
+# Prerequisites:
+#   1. Nodes + control_node up:
+#        docker compose -f docker-compose-nodes.yml up -d --build
+#   2. Ansible image built locally (the whitelist uses --no-pull):
+#        cd ansible && make build
+#   3. deploy-service running: make dev   (port 8001)
+#
+# The `host` here is the control_node (we SSH INTO it). ssh_config=control_node
+# selects data/SSH-control_node.json (port 2224). The script then SSHes onward
+# to node1/node2 itself.
+###############################################################################
+
+@base_url = http://localhost:8001
+@admin_user = admin
+@admin_pass = password
+
+### Get Token
+# @name login
+POST {{base_url}}/token
+Content-Type: application/x-www-form-urlencoded
+
+username={{admin_user}}&password={{admin_pass}}
+
+### Store the access token
+@token = {{login.response.body.access_token}}
+
+### Inspect the two ansible commands in the whitelist
+GET {{base_url}}/api/v1/command/run_ansible_ping_all/info
+Authorization: Bearer {{token}}
+
+### Run ping against ALL hosts in taipei/multinode.ini
+# @name my_command
+POST {{base_url}}/api/v1/command/execution
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "command_name": "run_ansible_ping_all",
+    "host": "localhost",
+    "port": 2224,
+    "username": "root",
+    "ssh_config": "control_node",
+    "option": {
+        "timeout_seconds": 300
+    },
+    "arguments": {
+        "inventory": "taipei/multinode.ini"
+    }
+}
+
+### Run ping LIMITED to node1
+# @name my_command
+POST {{base_url}}/api/v1/command/execution
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "command_name": "run_ansible_ping",
+    "host": "localhost",
+    "port": 2224,
+    "username": "root",
+    "ssh_config": "control_node",
+    "option": {
+        "timeout_seconds": 300
+    },
+    "arguments": {
+        "inventory": "taipei/multinode.ini",
+        "limit": "node1"
+    }
+}
+
+### Run ping against the bare-metal inventory, limited to node2
+# @name my_command
+POST {{base_url}}/api/v1/command/execution
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "command_name": "run_ansible_ping",
+    "host": "localhost",
+    "port": 2224,
+    "username": "root",
+    "ssh_config": "control_node",
+    "option": {
+        "timeout_seconds": 300
+    },
+    "arguments": {
+        "inventory": "taipei/bm_multinode.ini",
+        "limit": "node2"
+    }
+}
+
+### Poll execution status (ansible output lands here when it finishes)
+@my_command_id = {{my_command.response.body.data.command_id}}
+
+GET {{base_url}}/api/v1/command/execution/{{my_command_id}}
+Authorization: Bearer {{token}}
+
+### Kill the run (ansible is killable; this SIGTERMs the run-ansible.sh pgroup)
+@my_command_id = {{my_command.response.body.data.command_id}}
+
+POST {{base_url}}/api/v1/command/execution/{{my_command_id}}/kill
+Authorization: Bearer {{token}}

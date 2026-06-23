@@ -1,0 +1,39 @@
+# control_node — a tiny "ansible jump host" for local testing.
+#
+# deploy-service SSHes in here (via the execution API) and runs run-ansible.sh.
+# The script itself does `docker run` to launch the ansible image, so this
+# container needs the docker CLI and talks to the HOST docker daemon through the
+# mounted /var/run/docker.sock (Docker-out-of-Docker). See docker-compose-nodes.yml.
+FROM ubuntu:24.04
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        openssh-server \
+        docker.io \
+        git \
+        curl \
+        ca-certificates \
+        iproute2 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Same SSH setup as the test nodes: root login, pubkey, and trust the CA so the
+# existing client_key / client_ca both work.
+RUN mkdir -p /var/run/sshd /root/.ssh && \
+    chmod 700 /root/.ssh && \
+    echo 'root:root' | chpasswd && \
+    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
+    echo "TrustedUserCAKeys /etc/ssh/ca.pub" >> /etc/ssh/sshd_config
+
+# The Ubuntu docker CLI may negotiate a newer API than the host daemon supports.
+# Pin it so DooD works against an older host Docker (override at runtime if needed).
+ENV DOCKER_API_VERSION=1.43
+# Make the env var visible to non-interactive SSH sessions too (sshd doesn't read
+# the image ENV for exec'd commands).
+RUN echo 'DOCKER_API_VERSION=1.43' >> /etc/environment && \
+    sed -i 's/^#*PermitUserEnvironment.*/PermitUserEnvironment yes/' /etc/ssh/sshd_config && \
+    mkdir -p /root/.ssh && echo 'DOCKER_API_VERSION=1.43' >> /root/.ssh/environment
+
+EXPOSE 22
+
+CMD ["/usr/sbin/sshd", "-D"]

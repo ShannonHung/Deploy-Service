@@ -41,6 +41,70 @@
         }
       ],
       "arguments": []
+    },
+    {
+      "command_name": "run_ansible_ping_all",
+      "description": "On the control_node, run run-ansible.sh ping.yml against an inventory (all hosts). Use ssh_config=control_node, host/port pointing at the control_node.",
+      "disconnects_ssh": false,
+      "killable": true,
+      "pipeline": [
+        {
+          "command": [
+            "/Users/shannon/Documents/Code/antigravity-fastapi/deploy-service/ansible/run-ansible.sh",
+            "--playbook",
+            "ping.yml",
+            "--inventory",
+            "{inventory}",
+            "--no-pull",
+            "--ssh-key",
+            "/Users/shannon/Documents/Code/antigravity-fastapi/deploy-service/data/ssh_keys/client_key"
+          ]
+        }
+      ],
+      "arguments": [
+        {
+          "name": "inventory",
+          "type": "string",
+          "description": "Inventory path relative to the inventory repo root, e.g. taipei/multinode.ini",
+          "validation_regex": "^[a-zA-Z0-9._/-]+\\.(ini|ya?ml)$"
+        }
+      ]
+    },
+    {
+      "command_name": "run_ansible_ping",
+      "description": "Same as run_ansible_ping_all but limited to a host/group pattern via ansible --limit (e.g. node1).",
+      "disconnects_ssh": false,
+      "killable": true,
+      "pipeline": [
+        {
+          "command": [
+            "/Users/shannon/Documents/Code/antigravity-fastapi/deploy-service/ansible/run-ansible.sh",
+            "--playbook",
+            "ping.yml",
+            "--inventory",
+            "{inventory}",
+            "--limit",
+            "{limit}",
+            "--no-pull",
+            "--ssh-key",
+            "/Users/shannon/Documents/Code/antigravity-fastapi/deploy-service/data/ssh_keys/client_key"
+          ]
+        }
+      ],
+      "arguments": [
+        {
+          "name": "inventory",
+          "type": "string",
+          "description": "Inventory path relative to the inventory repo root, e.g. taipei/multinode.ini",
+          "validation_regex": "^[a-zA-Z0-9._/-]+\\.(ini|ya?ml)$"
+        },
+        {
+          "name": "limit",
+          "type": "string",
+          "description": "ansible --limit pattern, e.g. node1 or node1,node2",
+          "validation_regex": "^[a-zA-Z0-9._,-]+$"
+        }
+      ]
     }
   ]
 }
