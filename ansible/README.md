@@ -39,7 +39,30 @@ The local SSH test nodes must be running (from `deploy-service/`):
 make setup-ssh-nodes      # builds + starts ssh_node_1 (2222) and ssh_node_2 (2223)
 ```
 
-## Build & publish the image
+## Makefile (the easy way)
+
+A `Makefile` wraps everything below. `make help` lists targets and current
+defaults. All inputs are override-able variables:
+
+```bash
+make build                 # build shannonhung/ansible-runner:latest
+make login                 # docker login (before push)
+make push                  # push the image
+make release               # build + push
+
+# Run: clones inventory fresh, pulls image, runs the playbook.
+make run                                   # ping.yml + taipei/multinode.ini
+make run INVENTORY=taipei/bm_multinode.ini LIMIT=node1
+make run PLAYBOOK=ping.yml EXTRA_VARS="foo=bar" TAGS=smoke
+
+# run-local: same, but use the locally-built image (no registry pull).
+make run-local LIMIT=node1
+```
+
+Override variables: `IMAGE`, `TAG`, `PLAYBOOK`, `INVENTORY`, `INVENTORY_REF`,
+`LIMIT`, `TAGS`, `EXTRA_VARS`, `PULL` (set `PULL=0` for `--no-pull`).
+
+## Build & publish the image (manual)
 
 ```bash
 cd deploy-service/ansible
@@ -49,7 +72,7 @@ docker push shannonhung/ansible-runner:latest
 
 For purely local testing without DockerHub, build the tag and pass `--no-pull`.
 
-## Run
+## Run (manual)
 
 `--inventory` is a path **relative to the inventory repo root** (one repo can
 hold many envs / files, e.g. `taipei/multinode.ini`, `taipei/bm_multinode.ini`):
