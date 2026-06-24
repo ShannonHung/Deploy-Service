@@ -177,7 +177,11 @@ async def get_inventory_service(
     repo: InventoryRepository = Depends(get_inventory_repository),
 ) -> InventoryService:
     s = get_settings()
-    return InventoryService(repo=repo, node_type_map=s.BASTION_NODE_TYPE_MAP)
+    return InventoryService(
+        repo=repo,
+        node_type_map=s.BASTION_NODE_TYPE_MAP,
+        slash_map=s.CLUSTER_SLASH_TYPE_MAP,
+    )
 
 
 async def get_command_service(
