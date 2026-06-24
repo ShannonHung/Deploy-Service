@@ -26,6 +26,7 @@ class CommandState(BaseModel):
     output: Optional[str] = None
     exit_code: Optional[int] = None
     message: Optional[str] = None
+    run_log_path: Optional[str] = None  # control_node path of the tee'd run log
 
     # execution metadata
     host: str
@@ -90,6 +91,7 @@ class CommandWhitelistConfig(BaseModel):
     description: str = ""
     disconnects_ssh: bool = False
     killable: bool = False
+    logged: bool = False  # opt-in: tee output to a per-run file + expose viewer
     pipeline: List[PipelineStep]
     arguments: List[CommandArgumentConfig] = []
 
@@ -144,6 +146,27 @@ class CommandExecutionResponse(BaseModel):
     @classmethod
     def success(cls, command_id: str, exit_status: int, output: str) -> "CommandExecutionResponse":
         return cls(status=CommandStatus.SUCCESS.value, command_id=command_id, exit_status=exit_status, output=output)
+
+
+class CommandLogLine(BaseModel):
+    num: int
+    content_html: str
+
+
+class CommandTraceResponse(BaseModel):
+    """Incremental slice of processed command-log lines for the UI.
+
+    Mirrors the deploy FormattedLogResponse but keyed by command_id and
+    carrying the command's lifecycle status.
+    """
+    command_id: str
+    status: str
+    next_byte_offset: int
+    next_line_num: int
+    lines: List[CommandLogLine]
+    total_size: int = 0
+    size_warning: bool = False
+    too_large: bool = False
 
 
 # ── Runtime Dataclasses ──────────────────────────────────────────────────────
