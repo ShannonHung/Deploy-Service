@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     BASTION_NODE_TYPE_MAP: Dict[str, str] = {}
     # Node label key used to extract the SSH target IP for HOSTNAME host_type.
     INVENTORY_IP_LABEL: str = "mgmt_ip"
+    # Maps slash-presence of a cluster_name to a bastion_type. Keys MUST be
+    # "no_slash" and "with_slash". Example:
+    #   CLUSTER_SLASH_TYPE_MAP='{"no_slash": "type1", "with_slash": "type2"}'
+    CLUSTER_SLASH_TYPE_MAP: Dict[str, str] = {}
 
     # ── Redis ─────────────────────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"

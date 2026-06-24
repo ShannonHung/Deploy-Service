@@ -23,6 +23,27 @@ from app.repositories.inventory_repository import InventoryRepository
 _logger = logging.getLogger(__name__)
 
 
+def cluster_type_from_name(
+    cluster_name: str, slash_map: Dict[str, str]
+) -> tuple[str, bool]:
+    """Derive (bastion_type, has_slash) from a cluster_name.
+
+    Slash-presence selects the key in slash_map: "with_slash" when the name
+    contains '/', else "no_slash". Raises CommandExecutionException naming the
+    missing key if slash_map lacks it (operator misconfig).
+    """
+    has_slash = "/" in cluster_name
+    key = "with_slash" if has_slash else "no_slash"
+    bastion_type = slash_map.get(key)
+    if bastion_type is None:
+        raise CommandExecutionException(
+            f"CLUSTER_SLASH_TYPE_MAP is missing key '{key}'. "
+            f"Current map: {slash_map}. Add both 'no_slash' and 'with_slash'.",
+            detail={"missing_key": key, "slash_map": slash_map},
+        )
+    return bastion_type, has_slash
+
+
 class ResolvedHost(BaseModel):
     ip: str
     source_input: str

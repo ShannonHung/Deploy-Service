@@ -19,6 +19,7 @@ class HostType(str, Enum):
     IP = "ip"
     BASTION = "bastion"
     HOSTNAME = "hostname"
+    CLUSTER = "cluster"
 
 class CommandState(BaseModel):
     command_id: str
