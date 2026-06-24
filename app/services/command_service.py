@@ -14,7 +14,9 @@ from app.domain.command import (
     UserCommandWhitelist, CommandWhitelistConfig,
     SSHConnectionConfig, RunningCommandEntry, ExecutionContext,
     CommandState, CommandStatus, HostType,
+    CommandLogLine, CommandTraceResponse,
 )
+from app.core.log_renderer import LogRenderer
 from app.core.config import get_settings
 from app.core.redis_client import RedisClient
 from app.repositories.ssh_auth_repository import create_authenticator
@@ -132,6 +134,120 @@ class CommandService:
             host_type=state.host_type,
             resolved_ip=state.resolved_ip,
             pgids=state.pgids,
+        )
+
+    async def _read_remote_log(self, state: CommandState, byte_offset: int) -> tuple[int, str]:
+        """SSH to the control_node and read the run log tail.
+
+        Returns ``(total_size, new_text)``. If the file does not exist yet
+        (run just started), returns ``(0, "")``. The log path is
+        server-generated and passed as a discrete argument (no shell metachars).
+
+        Raises:
+            UpstreamTimeoutException / UpstreamUnavailableException:
+                SSH connect failure when reading the log (mirrors ``_connect``).
+        """
+        ssh_config = self._load_ssh_config(state.ssh_config)
+        authenticator = create_authenticator(ssh_config)
+        conn_kwargs = authenticator.get_connect_kwargs()
+        path = state.run_log_path
+        try:
+            conn = await asyncio.wait_for(
+                asyncssh.connect(
+                    host=state.resolved_ip, port=state.port,
+                    username=state.username, **conn_kwargs,
+                ),
+                timeout=settings.SSH_CONNECT_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            raise UpstreamTimeoutException(
+                f"SSH connect to read log timed out for {state.command_id}.",
+                detail={"command_id": state.command_id},
+            ) from exc
+        except (OSError, asyncssh.Error) as exc:
+            raise UpstreamUnavailableException(
+                f"SSH connect to read log failed for {state.command_id}: {exc}",
+                detail={"command_id": state.command_id},
+            ) from exc
+        try:
+            size_res = await conn.run("stat", "-c", "%s", path, check=False)
+            if size_res.exit_status != 0:
+                return 0, ""  # file not created yet
+            total_size = int(str(size_res.stdout).strip() or "0")
+            tail_res = await conn.run(
+                "tail", "-c", f"+{byte_offset + 1}", path, check=False,
+            )
+            new_text = str(tail_res.stdout) if tail_res.stdout else ""
+            return total_size, new_text
+        finally:
+            conn.close()
+
+    async def get_command_trace(self, command_id: str, byte_offset: int = 0, line_num: int = 1) -> CommandTraceResponse:
+        """Incremental tail of a logged command's run log for the UI viewer.
+
+        Loads the CommandState pointer from Redis, SSHes to the control_node,
+        and returns the newly-appended log lines (rendered to HTML) plus the
+        new byte/line cursors. Honours soft/hard size caps.
+
+        Raises:
+            NotFoundException: command_id unknown.
+        """
+        try:
+            state = await self.repo.get(command_id)
+        except CommandExecutionException as exc:
+            raise NotFoundException(
+                f"Command {command_id} not found.",
+                detail={"command_id": command_id},
+            ) from exc
+
+        status = state.status.value if hasattr(state.status, "value") else str(state.status)
+
+        if not state.run_log_path:
+            return CommandTraceResponse(
+                command_id=command_id, status=status,
+                next_byte_offset=byte_offset, next_line_num=line_num, lines=[],
+            )
+
+        total_size, new_text = await self._read_remote_log(state, byte_offset)
+
+        if total_size > settings.COMMAND_LOG_HARD_CAP_BYTES:
+            return CommandTraceResponse(
+                command_id=command_id, status=status,
+                next_byte_offset=byte_offset, next_line_num=line_num,
+                lines=[], total_size=total_size, too_large=True,
+            )
+
+        size_warning = total_size > settings.COMMAND_LOG_SOFT_CAP_BYTES
+
+        # Hold back a trailing partial line so we never render half a line.
+        next_byte_offset = total_size
+        if new_text and not new_text.endswith("\n"):
+            last_nl = new_text.rfind("\n")
+            if last_nl == -1:
+                return CommandTraceResponse(
+                    command_id=command_id, status=status,
+                    next_byte_offset=byte_offset, next_line_num=line_num,
+                    lines=[], total_size=total_size, size_warning=size_warning,
+                )
+            held_back = len(new_text) - (last_nl + 1)
+            new_text = new_text[: last_nl + 1]
+            next_byte_offset = total_size - held_back
+
+        if not new_text:
+            return CommandTraceResponse(
+                command_id=command_id, status=status,
+                next_byte_offset=next_byte_offset, next_line_num=line_num,
+                lines=[], total_size=total_size, size_warning=size_warning,
+            )
+
+        rendered = LogRenderer().render(0, new_text, start_line_num=line_num)
+        lines = [CommandLogLine(num=l.num, content_html=l.content_html) for l in rendered]
+
+        return CommandTraceResponse(
+            command_id=command_id, status=status,
+            next_byte_offset=next_byte_offset,
+            next_line_num=line_num + len(lines),
+            lines=lines, total_size=total_size, size_warning=size_warning,
         )
 
     def get_user_commands(self, username: str) -> UserCommandWhitelist:
