@@ -66,6 +66,16 @@ class Settings(BaseSettings):
     COMMAND_MAX_CONCURRENCY: int = 20
     COMMAND_MAX_RUNNING: int = 50
     SSH_CONNECT_TIMEOUT_SECONDS: int = 30
+    # Control_node directory where run-ansible.sh tees per-run logs.
+    COMMAND_LOG_DIR: str = "/var/log/ansible-runs"
+    # Soft cap → CommandTraceResponse.size_warning (banner, keep polling).
+    COMMAND_LOG_SOFT_CAP_BYTES: int = 5 * 1024 * 1024
+    # Hard cap → CommandTraceResponse.too_large (viewer stops polling).
+    COMMAND_LOG_HARD_CAP_BYTES: int = 10 * 1024 * 1024
+    # For `logged` commands: on failure, keep only the last N lines of output in
+    # Redis as an error summary (full log lives on the control_node / /view).
+    # 0 = store nothing even on failure.
+    COMMAND_LOG_FAILURE_TAIL_LINES: int = 50
 
     # ── Inventory API (hostname lookup, cluster node lookup, bastion mappings) ──
     INVENTORY_API_URL: str = "http://localhost:9001"
