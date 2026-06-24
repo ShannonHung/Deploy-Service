@@ -23,7 +23,7 @@ def _slash_map(monkeypatch):
 
 async def test_prepare_execution_resolves_cluster_host(tmp_path, monkeypatch):
     # Whitelist allowing the resolved bastion IP and a trivial command.
-    import json, os
+    import json
     cfg = {
         "name": "admin",
         "allow_hosts": ["10\\.1\\.0\\.1"],

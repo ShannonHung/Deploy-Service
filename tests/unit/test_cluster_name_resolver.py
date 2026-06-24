@@ -1,6 +1,6 @@
 import pytest
 
-from app.core.exceptions import CommandExecutionException, NotFoundException
+from app.core.exceptions import NotFoundException
 from app.domain.command import HostType
 from app.repositories.host_resolver import (
     ClusterNameResolver,
