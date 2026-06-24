@@ -16,6 +16,7 @@ Route layout:
   GET  /api/v1/inventory/mappings          → Bastion-cluster mappings
   GET  /api/v1/inventory/nodes/{node_name}/bastion-resolution → Node-to-bastion resolution
   GET  /api/v1/inventory/cluster/bastion-resolution → Cluster-name-to-bastion resolution
+  GET  /api/v1/command/running             → List in-flight commands (admin_api)
 """
 
 from __future__ import annotations

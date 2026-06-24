@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 from fastapi import APIRouter, Depends, Request, Query
 from fastapi.responses import HTMLResponse
 
@@ -6,6 +7,7 @@ from app.domain.command import (
     CommandExecutionRequest, CommandExecutionResponse,
     CommandStatus, CommandTraceResponse,
     UserCommandWhitelist, CommandWhitelistConfig,
+    RunningCommandsResponse,
 )
 from app.core.log_viewer_template import LOG_VIEWER_HTML
 from app.services.command_service import CommandService
@@ -53,6 +55,28 @@ async def get_specific_command_info(
 ) -> ApiResponse[CommandWhitelistConfig]:
     cmd_info = svc.get_command_info(current_user.account, command_name)
     return ApiResponse(data=cmd_info, request_id=_request_id(request))
+
+
+@router.get(
+    "/running",
+    response_model=ApiResponse[RunningCommandsResponse],
+    summary="List in-flight commands across all pods (admin only)",
+    description="Returns commands not yet in a terminal state (default running+killing). "
+                "Admin-gated so operators can decide whether an upgrade is safe.",
+)
+async def list_running_commands_endpoint(
+    request: Request,
+    status: Optional[CommandStatus] = Query(
+        default=None,
+        description="Optional single status filter; default returns running + killing.",
+    ),
+    current_user: User = Depends(get_current_user(["admin_api"])),
+    svc: CommandService = Depends(get_command_service),
+) -> ApiResponse[RunningCommandsResponse]:
+    statuses = {status} if status is not None else None
+    states = await svc.list_running_commands(statuses)
+    data = RunningCommandsResponse(count=len(states), commands=states)
+    return ApiResponse(data=data, request_id=_request_id(request))
 
 
 @router.post(

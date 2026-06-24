@@ -5,7 +5,8 @@
         "scopes": [
             "deploy_api",
             "vm_api",
-            "command_api"
+            "command_api",
+            "admin_api"
         ]
     },
     {
