@@ -1,11 +1,13 @@
 import logging
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Query
+from fastapi.responses import HTMLResponse
 
 from app.domain.command import (
     CommandExecutionRequest, CommandExecutionResponse,
-    CommandStatus,
+    CommandStatus, CommandTraceResponse,
     UserCommandWhitelist, CommandWhitelistConfig,
 )
+from app.core.log_viewer_template import LOG_VIEWER_HTML
 from app.services.command_service import CommandService
 from app.core.dependencies import get_current_user, get_command_service
 from app.core.exceptions import (
@@ -80,6 +82,44 @@ async def get_command_execution_status(
 ) -> ApiResponse[CommandExecutionResponse]:
     response_data = await svc.get_command_execution_result(command_id)
     return ApiResponse(data=response_data, request_id=_request_id(request))
+
+
+@router.get(
+    "/execution/{command_id}/trace/ui",
+    response_model=ApiResponse[CommandTraceResponse],
+    summary="Get formatted command logs for UI",
+    description="Incremental tail of the control_node run log; poll with byte_offset.",
+)
+async def get_command_trace_ui(
+    command_id: str,
+    request: Request,
+    byte_offset: int = Query(0, ge=0),
+    line_num: int = Query(1, ge=1),
+    current_user: User = Depends(get_current_user(["command_api"])),
+    svc: CommandService = Depends(get_command_service),
+) -> ApiResponse[CommandTraceResponse]:
+    data = await svc.get_command_trace(command_id, byte_offset, line_num)
+    return ApiResponse(data=data, request_id=_request_id(request))
+
+
+@router.get(
+    "/execution/{command_id}/view",
+    response_class=HTMLResponse,
+    summary="View command logs in UI",
+    description="Auto-refreshing log viewer for a long-running command.",
+)
+async def view_command(command_id: str):
+    # Mirror deploy's view_job auth posture: the HTML shell is unauthed; the
+    # /trace/ui endpoint it polls carries its own command_api-scoped token.
+    trace_url = f"/api/v1/command/execution/{command_id}/trace/ui"
+    meta_html = f'<div><span class="label">Command ID</span><code>{command_id}</code></div>'
+    return LOG_VIEWER_HTML.format(
+        title=f"Command Log Viewer | {command_id}",
+        heading=f"Command: {command_id}",
+        trace_url=trace_url,
+        terminal_statuses_json="['success','failed','killed']",
+        meta_html=meta_html,
+    )
 
 
 @router.post(
