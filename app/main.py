@@ -16,7 +16,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.security import OAuth2PasswordRequestForm
@@ -26,6 +26,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.router import api_router
 from app.core.config import get_settings
+from app.core.dependencies import ACCESS_TOKEN_COOKIE
 from app.core.exceptions import (
     BaseAppException,
     app_exception_handler,
@@ -150,11 +151,24 @@ def create_app() -> FastAPI:
         summary="Login — obtain a JWT access token",
     )
     async def token_endpoint(
+        response: Response,
         form_data: OAuth2PasswordRequestForm = Depends(),
     ) -> OAuth2TokenResponse:
         svc = AuthService(JsonUserRepository(settings.USERS_JSON_PATH))
         user = await svc.authenticate(form_data.username, form_data.password)
         token_data = await svc.generate_token(user)
+        # Also set the JWT as an HttpOnly, same-origin cookie so the HTML log
+        # viewers (which cannot attach a Bearer header to their fetch() polls)
+        # are authenticated after a normal /token login. API/Swagger callers
+        # keep using the access_token in the response body as a Bearer header.
+        response.set_cookie(
+            key=ACCESS_TOKEN_COOKIE,
+            value=token_data.access_token,
+            max_age=token_data.expires_in,
+            httponly=True,
+            samesite="lax",
+            secure=False,  # served over http in dev; set True behind TLS in prod
+        )
         return OAuth2TokenResponse(
             access_token=token_data.access_token,
             token_type=token_data.token_type,

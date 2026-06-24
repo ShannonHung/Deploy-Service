@@ -9,7 +9,9 @@ from app.domain.command import (
 )
 from app.core.log_viewer_template import LOG_VIEWER_HTML
 from app.services.command_service import CommandService
-from app.core.dependencies import get_current_user, get_command_service
+from app.core.dependencies import (
+    get_current_user, get_current_user_cookie_or_header, get_command_service,
+)
 from app.core.exceptions import (
     CommandExecutionException, ConflictException, NotFoundException,
 )
@@ -95,7 +97,7 @@ async def get_command_trace_ui(
     request: Request,
     byte_offset: int = Query(0, ge=0),
     line_num: int = Query(1, ge=1),
-    current_user: User = Depends(get_current_user(["command_api"])),
+    current_user: User = Depends(get_current_user_cookie_or_header(["command_api"])),
     svc: CommandService = Depends(get_command_service),
 ) -> ApiResponse[CommandTraceResponse]:
     data = await svc.get_command_trace(command_id, byte_offset, line_num)
