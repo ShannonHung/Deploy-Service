@@ -255,12 +255,23 @@ class CommandService:
             resolved_host=resolved,
         )
 
-    def _resolve_command_part(self, part: str, arguments: Dict[str, Any], arg_defs: list) -> str:
-        """Replace {placeholder} tokens in a single command part with actual argument values."""
+    def _compute_log_path(self, command_id: str) -> str:
+        """Control_node path where run-ansible.sh tees this run's log."""
+        return f"{settings.COMMAND_LOG_DIR}/{command_id}.log"
+
+    def _resolve_command_part(self, part: str, arguments: Dict[str, Any], arg_defs: list, run_id: Optional[str] = None) -> str:
+        """Replace {placeholder} tokens in a single command part.
+
+        User-argument placeholders come from ``arguments``/``arg_defs``.
+        ``{run_id}`` is server-injected (never a user argument) and resolved
+        from ``run_id`` when provided.
+        """
         for arg in arg_defs:
             placeholder = f"{{{arg.name}}}"
             if placeholder in part:
                 part = part.replace(placeholder, str(arguments[arg.name]))
+        if run_id is not None and "{run_id}" in part:
+            part = part.replace("{run_id}", run_id)
         return part
 
     def _build_pipeline(self, context: ExecutionContext) -> List[List[str]]:
@@ -274,7 +285,12 @@ class CommandService:
         """
         return [
             [
-                self._resolve_command_part(part, context.raw_request.arguments, context.cmd_config.arguments)
+                self._resolve_command_part(
+                    part,
+                    context.raw_request.arguments,
+                    context.cmd_config.arguments,
+                    run_id=context.run_id,
+                )
                 for part in step.command
             ]
             for step in context.cmd_config.pipeline

@@ -191,3 +191,5 @@ class ExecutionContext:
     resolved_host: "ResolvedHost"  # forward-ref to avoid circular import
     conn: Optional[asyncssh.SSHClientConnection] = None
     pipeline_cmds: List[List[str]] = field(default_factory=list)
+    run_id: Optional[str] = None
+    run_log_path: Optional[str] = None
