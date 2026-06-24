@@ -161,6 +161,58 @@ class ClusterBastionHostResolver(HostResolver):
         )
 
 
+class ClusterNameResolver(HostResolver):
+    """Resolve a cluster_name directly to a bastion IP.
+
+    Slash-presence in the cluster_name selects bastion_type via slash_map
+    (see cluster_type_from_name); the cluster_name is then regex-matched
+    against the inventory mappings for that type. No node-lookup is performed.
+    """
+
+    def __init__(
+        self,
+        inventory_repo: InventoryRepository,
+        slash_map: Dict[str, str],
+    ) -> None:
+        self._inventory_repo = inventory_repo
+        self._slash_map = slash_map
+
+    async def resolve(self, raw_host: str) -> ResolvedHost:
+        cluster_name = raw_host
+        bastion_type, has_slash = cluster_type_from_name(cluster_name, self._slash_map)
+        mappings = await self._inventory_repo.list_mappings(bastion_type)
+
+        for mapping in mappings:
+            for pattern in mapping.patterns:
+                try:
+                    matched = re.fullmatch(pattern, cluster_name)
+                except re.error:
+                    _logger.warning(
+                        "Skipping invalid regex pattern %r in bastion mapping "
+                        "(type=%s) — fix the mapping API data",
+                        pattern, bastion_type,
+                    )
+                    continue
+                if matched:
+                    return ResolvedHost(
+                        ip=mapping.bastion_ip,
+                        source_input=cluster_name,
+                        metadata={
+                            "cluster_name": cluster_name,
+                            "bastion_type": bastion_type,
+                            "has_slash": str(has_slash),
+                            "bastion_hostname": mapping.bastion,
+                            "matched_pattern": pattern,
+                        },
+                    )
+
+        raise NotFoundException(
+            f"No bastion mapping matched cluster '{cluster_name}' "
+            f"for type '{bastion_type}'.",
+            detail={"cluster_name": cluster_name, "bastion_type": bastion_type},
+        )
+
+
 def create_host_resolver(
     host_type: HostType,
     *,
@@ -168,6 +220,7 @@ def create_host_resolver(
     node_type_map: Optional[Dict[str, str]] = None,
     bastion_type: Optional[str] = None,
     ip_label: Optional[str] = None,
+    slash_map: Optional[Dict[str, str]] = None,
 ) -> HostResolver:
     if host_type == HostType.IP:
         return IpHostResolver()
@@ -181,4 +234,10 @@ def create_host_resolver(
                 "BASTION resolver requires inventory_repo and node_type_map"
             )
         return ClusterBastionHostResolver(inventory_repo, node_type_map, bastion_type)
+    if host_type == HostType.CLUSTER:
+        if inventory_repo is None or slash_map is None:
+            raise ValueError(
+                "CLUSTER resolver requires inventory_repo and slash_map"
+            )
+        return ClusterNameResolver(inventory_repo, slash_map)
     raise ValueError(f"Unsupported host_type: {host_type}")
