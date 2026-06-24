@@ -693,7 +693,10 @@ class CommandService:
             host_type=context.raw_request.host_type,
             resolved_ip=context.resolved_host.ip,
             port=context.raw_request.port,
-            username=context.username,
+            # SSH account from the request (e.g. root), NOT the deploy-service
+            # login account (context.username). Cross-pod kill and the log
+            # viewer reconnect over SSH using state.username.
+            username=context.raw_request.username,
             ssh_config=context.raw_request.ssh_config,
             request_id=context.request_id,
             killable=context.cmd_config.killable,

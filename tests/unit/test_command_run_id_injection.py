@@ -83,3 +83,32 @@ async def test_handle_async_persists_run_log_path(monkeypatch):
     resp = await svc._handle_async_execution(ctx, command_id="fixed-id")
     assert resp.command_id == "fixed-id"
     assert saved["state"].run_log_path == "/var/log/ansible-runs/fixed-id.log"
+
+
+async def test_state_username_is_ssh_account_not_login_account(monkeypatch):
+    """CommandState.username must be the SSH account (req.username='root'),
+    not the deploy-service login account (context.username='admin'). Reading
+    the log back and cross-pod kill reconnect via SSH using state.username."""
+    cfg = CommandWhitelistConfig(
+        command_name="run_ansible_ping_all", logged=True, killable=True,
+        pipeline=[PipelineStep(command=["/x/run-ansible.sh"])],
+    )
+    ctx = _ctx(cfg, run_id="fixed-id")  # req.username='root', context.username='admin'
+    ctx.conn = MagicMock()
+    ctx.pipeline_cmds = [["/x/run-ansible.sh"]]
+
+    repo = MagicMock()
+    saved = {}
+
+    async def fake_save(state, ttl):
+        saved["state"] = state
+    repo.save = AsyncMock(side_effect=fake_save)
+    repo.update = AsyncMock()
+
+    svc = CommandService(repo=repo, inventory_repo=None)
+    monkeypatch.setattr(svc, "_execute_pipeline", AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr(svc, "_collect_output", AsyncMock(return_value=(0, "ok")))
+    monkeypatch.setattr(svc, "_store_result", AsyncMock())
+
+    await svc._handle_async_execution(ctx, command_id="fixed-id")
+    assert saved["state"].username == "root"
