@@ -941,6 +941,19 @@ class CommandService:
             except Exception as e:
                 logger.error(f"Error killing PGID {pgid}: {e}", extra={"command_id": command_id})
 
+    async def list_running_commands(
+        self, statuses: Optional[set[CommandStatus]] = None
+    ) -> List[CommandState]:
+        """Return command states currently in-flight across all pods.
+
+        Defaults to non-terminal states (RUNNING + KILLING) when no explicit
+        status set is given. Reads from Redis so it sees commands started on
+        other pods.
+        """
+        if statuses is None:
+            statuses = {CommandStatus.RUNNING, CommandStatus.KILLING}
+        return await self.repo.list_states(statuses)
+
     async def shutdown_gracefully(self):
         """Kill all active commands during application shutdown.
 

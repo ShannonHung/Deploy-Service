@@ -172,6 +172,11 @@ class CommandTraceResponse(BaseModel):
     too_large: bool = False
 
 
+class RunningCommandsResponse(BaseModel):
+    count: int
+    commands: List[CommandState]
+
+
 # ── Runtime Dataclasses ──────────────────────────────────────────────────────
 
 @dataclass
