@@ -32,6 +32,7 @@ TAGS=""
 LIMIT=""
 EXTRA_VARS=""
 PULL=1                  # docker pull before run; --no-pull disables (for local-built images)
+PLAYBOOK_DIR=""         # host dir bind-mounted over the image's /playbooks; empty → use image's baked playbooks
 LOG_DIR="$(pwd)/logs"
 RUN_ID=""               # per-run id from deploy-service; when set, log file is <run_id>.log
 LOG_RETENTION_DAYS=3    # self-cleaning: prune <log-dir>/*.log older than this many days
@@ -53,6 +54,9 @@ Options:
   --extra-vars <k=v ...>  ansible --extra-vars string
   --image <name>          Runner image (default: shannonhung/ansible-runner:latest)
   --no-pull               Skip `docker pull` (use a locally-built image)
+  --playbook-dir <path>   Host dir bind-mounted over the image's /playbooks, so
+                          local playbooks (not baked into the image) are usable.
+                          Unset → use the image's built-in /playbooks.
   --log-dir <path>        Host dir to mount for logs (default: ./logs)
   --run-id <id>           Per-run id; log is written to <log-dir>/<id>.log
                           (must match ^[A-Za-z0-9_-]+$). Unset → run.log.
@@ -80,6 +84,7 @@ while [[ $# -gt 0 ]]; do
     --extra-vars)     EXTRA_VARS="$2"; shift 2 ;;
     --image)          IMAGE="$2"; shift 2 ;;
     --no-pull)        PULL=0; shift ;;
+    --playbook-dir)   PLAYBOOK_DIR="$2"; shift 2 ;;
     --log-dir)        LOG_DIR="$2"; shift 2 ;;
     --run-id)         RUN_ID="$2"; shift 2 ;;
     --log-retention-days) LOG_RETENTION_DAYS="$2"; shift 2 ;;
@@ -96,6 +101,12 @@ if [[ -z "$PLAYBOOK" || -z "$INVENTORY" ]]; then
 fi
 if [[ ! -f "$SSH_KEY" ]]; then
   echo "Error: ssh key not found: $SSH_KEY" >&2
+  exit 2
+fi
+# If a host playbook dir is given, it must exist (it's bind-mounted into the
+# container over /playbooks). Empty → fall back to the image's baked playbooks.
+if [[ -n "$PLAYBOOK_DIR" && ! -d "$PLAYBOOK_DIR" ]]; then
+  echo "Error: --playbook-dir not found: $PLAYBOOK_DIR" >&2
   exit 2
 fi
 
@@ -129,10 +140,19 @@ if [[ "$LOG_RETENTION_DAYS" -gt 0 && -n "$LOG_DIR" && -d "$LOG_DIR" ]]; then
   find "$LOG_DIR" -maxdepth 1 -type f -name '*.log' -mtime "+$LOG_RETENTION_DAYS" -delete 2>/dev/null || true
 fi
 
+# Build the optional playbook bind-mount (host dir over the image's /playbooks).
+PLAYBOOK_MOUNT_ARGS=()
+if [[ -n "$PLAYBOOK_DIR" ]]; then
+  PLAYBOOK_MOUNT_ARGS=(-v "$PLAYBOOK_DIR":/playbooks:ro)
+fi
+
 # Test/inspection hook: print the resolved log path and exit before any docker
 # or git work. Used by the script's unit test (no network/docker required).
 if [[ "${DRYRUN:-0}" == "1" ]]; then
   echo "DRYRUN log file: $LOG_FILE"
+  if [[ -n "$PLAYBOOK_DIR" ]]; then
+    echo "DRYRUN playbook mount: $PLAYBOOK_DIR -> /playbooks"
+  fi
   exit 0
 fi
 
@@ -197,6 +217,7 @@ docker run --rm \
   --add-host host.docker.internal:host-gateway \
   -v "$CLONE_DIR":/inventory:ro \
   -v "$SSH_KEY":/root/.ssh/id_key:ro \
+  "${PLAYBOOK_MOUNT_ARGS[@]}" \
   -e ANSIBLE_PRIVATE_KEY_FILE=/root/.ssh/id_key \
   -e ANSIBLE_COLLECTIONS_PATH=/collections \
   "$IMAGE" \
