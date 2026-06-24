@@ -11,7 +11,7 @@ LOG_VIEWER_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Log Viewer | {job_id}</title>
+    <title>{title}</title>
     <style>
         /* CSS Variables - Default (Dark Theme) */
         :root {{
@@ -244,8 +244,8 @@ LOG_VIEWER_HTML = """
 <body>
     <header>
         <div class="title-group">
-            <span class="badge">Job Trace</span>
-            <h1>Job: {job_id}</h1>
+            <span class="badge">Trace</span>
+            <h1>{heading}</h1>
         </div>
         <div class="controls">
             <button class="theme-toggle" id="theme-btn" onclick="toggleTheme()">
@@ -286,14 +286,12 @@ LOG_VIEWER_HTML = """
         const MAX_INTERVAL = 30000;
         const MAX_FAILURES = 5;
 
-        const TERMINAL_STATUSES = ['success', 'failed', 'canceled', 'skipped', 'manual'];
+        const TERMINAL_STATUSES = {terminal_statuses_json};
 
-        const gitlabUrl = '{gitlab_url}';
-        const projectId = '{project_id}';
-        const jobId = '{job_id}';
-        // Resolved server-side via GitLab's job.web_url — authoritative
-        // and immune to project rename / namespace changes.
-        const jobLink = '{job_web_url}';
+        // Server-rendered metadata rows (project/job/command identifiers and
+        // any "open externally" link). Empty string for viewers with no
+        // external surface (e.g. the command viewer).
+        const META_HTML = `{meta_html}`;
 
         function formatBytes(n) {{
             if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
@@ -340,9 +338,8 @@ LOG_VIEWER_HTML = """
             banner.innerHTML = `
                 <div class="banner-text">
                     <strong>Log is large (${{formatBytes(totalSize)}}).</strong>
-                    Rendering many lines may slow your browser — for better performance, view in GitLab.
+                    Rendering many lines may slow your browser.
                 </div>
-                <a href="${{jobLink}}" target="_blank" rel="noopener">Open in GitLab →</a>
             `;
             // Insert as a flex sibling between <header> and #log-container
             // so the banner stays pinned at the top of the viewport.
@@ -365,26 +362,18 @@ LOG_VIEWER_HTML = """
 
             let heading;
             let body;
-            let metaRows;
+            let extraRows;
             if (opts.reason === 'too_large') {{
                 jobStatusBadge.innerText = 'TOO LARGE';
                 heading = 'Log too large to display';
-                body = `This job's log has reached ${{formatBytes(opts.totalSize)}}, which exceeds the viewer's hard cap. Rendering it in the browser would make the page unresponsive, so the viewer is handing off to GitLab.`;
-                metaRows = `
-                    <div><span class="label">Project ID</span><code>${{projectId}}</code></div>
-                    <div><span class="label">Job ID</span><code>${{jobId}}</code></div>
-                    <div><span class="label">Trace size</span><code>${{formatBytes(opts.totalSize)}}</code></div>
-                `;
+                body = `This log has reached ${{formatBytes(opts.totalSize)}}, which exceeds the viewer's hard cap. Rendering it in the browser would make the page unresponsive.`;
+                extraRows = `<div><span class="label">Trace size</span><code>${{formatBytes(opts.totalSize)}}</code></div>`;
             }} else {{
                 jobStatusBadge.innerText = 'UNAVAILABLE';
                 const detail = opts.err && opts.err.message ? opts.err.message : 'Unknown error';
-                heading = 'Cannot load job logs';
+                heading = 'Cannot load logs';
                 body = `Failed to fetch logs after ${{MAX_FAILURES}} consecutive attempts. Polling has stopped to avoid further load.`;
-                metaRows = `
-                    <div><span class="label">Project ID</span><code>${{projectId}}</code></div>
-                    <div><span class="label">Job ID</span><code>${{jobId}}</code></div>
-                    <div><span class="label">Last error</span><code>${{detail}}</code></div>
-                `;
+                extraRows = `<div><span class="label">Last error</span><code>${{detail}}</code></div>`;
             }}
 
             // Append the panel below whatever's already rendered (so the
@@ -394,16 +383,15 @@ LOG_VIEWER_HTML = """
             panel.innerHTML = `
                 <h2>${{heading}}</h2>
                 <p>${{body}}</p>
-                <div class="error-meta">${{metaRows}}</div>
-                <p>Please check the job directly in GitLab:</p>
-                <p><a class="error-link" href="${{jobLink}}" target="_blank" rel="noopener">${{jobLink}}</a></p>
+                <div class="error-meta">${{META_HTML}}${{extraRows}}</div>
             `;
             container.appendChild(panel);
         }}
 
         async function refresh() {{
             try {{
-                const res = await fetch(`/api/v1/deploy/jobs/{job_id}/trace/ui?byte_offset=${{currentByteOffset}}&line_num=${{currentLineNum}}&project_id={project_id}&t=${{Date.now()}}`, {{ cache: 'no-store' }});
+                const sep = `{trace_url}`.includes('?') ? '&' : '?';
+                const res = await fetch(`{trace_url}${{sep}}byte_offset=${{currentByteOffset}}&line_num=${{currentLineNum}}&t=${{Date.now()}}`, {{ cache: 'no-store' }});
                 if (!res.ok) throw new Error(`HTTP ${{res.status}}`);
                 const json = await res.json();
                 if (!json.data || !json.data.lines) throw new Error("Invalid API response");
