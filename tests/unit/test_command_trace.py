@@ -66,6 +66,56 @@ async def test_trace_hard_cap_stops_serving_lines(monkeypatch):
     assert resp.lines == []
 
 
+async def test_read_remote_log_calls_conn_run_with_single_command_string(monkeypatch):
+    """asyncssh's conn.run takes ONE command string, not argv. Passing argv
+    blew up with 'create_session() takes 2-3 positional arguments but 6 given'.
+    The server-generated path must be shlex-quoted into that string."""
+    import shlex
+    svc = _svc_with_state(_state(run_log_path="/var/log/ansible-runs/c 1.log"))
+
+    calls = []
+
+    class _FakeResult:
+        def __init__(self, stdout, exit_status=0):
+            self.stdout = stdout
+            self.exit_status = exit_status
+
+    fake_conn = MagicMock()
+
+    async def fake_run(command, *args, **kwargs):
+        # Record the full positional shape so argv-misuse is detectable:
+        # correct code calls run("stat -c %s <path>"); buggy code calls
+        # run("stat", "-c", "%s", <path>) which leaves args non-empty.
+        calls.append((command, args))
+        if command.startswith("stat"):
+            return _FakeResult("42\n", 0)
+        return _FakeResult("line\n", 0)
+
+    fake_conn.run = AsyncMock(side_effect=fake_run)
+    fake_conn.close = MagicMock()
+
+    monkeypatch.setattr(
+        "app.services.command_service.create_authenticator",
+        lambda cfg: MagicMock(get_connect_kwargs=lambda: {}),
+    )
+    monkeypatch.setattr(svc, "_load_ssh_config", lambda target: MagicMock())
+    monkeypatch.setattr(
+        "app.services.command_service.asyncssh.connect",
+        AsyncMock(return_value=fake_conn),
+    )
+
+    total, text = await svc._read_remote_log(svc.repo.get.return_value, 0)
+
+    # Each call must be ONE command string with no extra positional argv
+    # (extra argv is exactly what crashed asyncssh's create_session).
+    assert all(extra == () for _cmd, extra in calls), calls
+    cmds = [cmd for cmd, _ in calls]
+    quoted = shlex.quote("/var/log/ansible-runs/c 1.log")
+    assert any(c.startswith("stat ") and quoted in c for c in cmds)
+    assert any(c.startswith("tail ") and quoted in c for c in cmds)
+    assert total == 42
+
+
 async def test_trace_soft_cap_sets_warning_but_serves(monkeypatch):
     get_settings.cache_clear()
     svc = _svc_with_state(_state())

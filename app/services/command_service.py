@@ -170,12 +170,16 @@ class CommandService:
                 detail={"command_id": state.command_id},
             ) from exc
         try:
-            size_res = await conn.run("stat", "-c", "%s", path, check=False)
+            # asyncssh's conn.run takes ONE command string, not argv. The path
+            # is server-generated, but shlex.quote keeps the anti-injection
+            # guarantee (and handles spaces) all the same.
+            quoted_path = shlex.quote(path)
+            size_res = await conn.run(f"stat -c %s {quoted_path}", check=False)
             if size_res.exit_status != 0:
                 return 0, ""  # file not created yet
             total_size = int(str(size_res.stdout).strip() or "0")
             tail_res = await conn.run(
-                "tail", "-c", f"+{byte_offset + 1}", path, check=False,
+                f"tail -c +{byte_offset + 1} {quoted_path}", check=False,
             )
             new_text = str(tail_res.stdout) if tail_res.stdout else ""
             return total_size, new_text
