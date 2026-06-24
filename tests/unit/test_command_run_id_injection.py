@@ -48,3 +48,38 @@ def test_logged_command_resolves_run_id_placeholder():
 def test_compute_log_path():
     path = _svc()._compute_log_path("abc-123")
     assert path == "/var/log/ansible-runs/abc-123.log"
+
+
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
+from app.domain.command import CommandState, CommandStatus
+
+
+async def test_handle_async_persists_run_log_path(monkeypatch):
+    cfg = CommandWhitelistConfig(
+        command_name="run_ansible_ping_all", logged=True, killable=True,
+        pipeline=[PipelineStep(command=["/x/run-ansible.sh", "--run-id", "{run_id}"])],
+    )
+    ctx = _ctx(cfg, run_id="fixed-id")
+    ctx.run_log_path = "/var/log/ansible-runs/fixed-id.log"
+    ctx.conn = MagicMock()
+    ctx.pipeline_cmds = [["/x/run-ansible.sh", "--run-id", "fixed-id"]]
+
+    repo = MagicMock()
+    saved = {}
+
+    async def fake_save(state, ttl):
+        saved["state"] = state
+    repo.save = AsyncMock(side_effect=fake_save)
+    repo.update = AsyncMock()
+
+    svc = CommandService(repo=repo, inventory_repo=None)
+
+    # Stop the background task from actually running SSH.
+    monkeypatch.setattr(svc, "_execute_pipeline", AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr(svc, "_collect_output", AsyncMock(return_value=(0, "ok")))
+    monkeypatch.setattr(svc, "_store_result", AsyncMock())
+
+    resp = await svc._handle_async_execution(ctx, command_id="fixed-id")
+    assert resp.command_id == "fixed-id"
+    assert saved["state"].run_log_path == "/var/log/ansible-runs/fixed-id.log"
