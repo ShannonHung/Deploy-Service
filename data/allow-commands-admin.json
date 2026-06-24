@@ -161,8 +161,6 @@
             "/Users/shannon/Documents/Code/antigravity-fastapi/deploy-service/ansible/run-ansible.sh",
             "--playbook",
             "clock.yml",
-            "--playbook-dir",
-            "/Users/shannon/Documents/Code/antigravity-fastapi/deploy-service/ansible/playbooks",
             "--inventory",
             "{inventory}",
             "--extra-vars",

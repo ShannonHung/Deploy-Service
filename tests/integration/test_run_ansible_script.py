@@ -57,30 +57,3 @@ def test_retention_zero_disables_cleanup(tmp_path):
     res = _run(tmp_path, "--run-id", "run9", "--log-retention-days", "0")
     assert res.returncode == 0, res.stderr
     assert old.exists(), "retention 0 must disable cleanup"
-
-
-def test_playbook_dir_mounts_local_dir(tmp_path):
-    # A local playbook dir is bind-mounted over the image's /playbooks so
-    # newly-added playbooks (e.g. clock.yml) are visible in the container.
-    pdir = tmp_path / "playbooks"
-    pdir.mkdir()
-    (pdir / "clock.yml").write_text("---\n")
-    res = _run(tmp_path, "--run-id", "ok", "--playbook-dir", str(pdir))
-    assert res.returncode == 0, res.stderr
-    out = res.stdout + res.stderr
-    assert str(pdir) in out and "/playbooks" in out
-
-
-def test_playbook_dir_missing_rejected(tmp_path):
-    res = _run(tmp_path, "--run-id", "ok",
-               "--playbook-dir", str(tmp_path / "does-not-exist"))
-    assert res.returncode == 2
-    assert "playbook-dir" in (res.stderr + res.stdout).lower()
-
-
-def test_no_playbook_dir_keeps_image_default(tmp_path):
-    # Without --playbook-dir the script must not emit a host playbook mount;
-    # the image's baked /playbooks is used.
-    res = _run(tmp_path, "--run-id", "ok")
-    assert res.returncode == 0, res.stderr
-    assert "playbook mount" not in (res.stdout + res.stderr).lower()
