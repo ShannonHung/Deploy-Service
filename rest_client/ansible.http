@@ -35,18 +35,18 @@ username={{admin_user}}&password={{admin_pass}}
 ### Store the access token
 @token = {{login.response.body.access_token}}
 
-### Inspect the two ansible commands in the whitelist
-GET {{base_url}}/api/v1/command/run_ansible_ping_all/info
+### Inspect the generic run_ansible command in the whitelist
+GET {{base_url}}/api/v1/command/run_ansible/info
 Authorization: Bearer {{token}}
 
-### Run ping against ALL hosts in taipei/multinode.ini
+### Run ping against ALL hosts in taipei/multinode.ini (limit omitted)
 # @name my_command
 POST {{base_url}}/api/v1/command/execution
 Authorization: Bearer {{token}}
 Content-Type: application/json
 
 {
-    "command_name": "run_ansible_ping_all",
+    "command_name": "run_ansible",
     "host": "localhost",
     "port": 2224,
     "username": "root",
@@ -55,6 +55,7 @@ Content-Type: application/json
         "timeout_seconds": 300
     },
     "arguments": {
+        "playbook": "ping.yml",
         "inventory": "taipei/multinode.ini"
     }
 }
@@ -66,7 +67,7 @@ Authorization: Bearer {{token}}
 Content-Type: application/json
 
 {
-    "command_name": "run_ansible_ping",
+    "command_name": "run_ansible",
     "host": "localhost",
     "port": 2224,
     "username": "root",
@@ -75,6 +76,7 @@ Content-Type: application/json
         "timeout_seconds": 300
     },
     "arguments": {
+        "playbook": "ping.yml",
         "inventory": "taipei/multinode.ini",
         "limit": "node1"
     }
@@ -87,7 +89,7 @@ Authorization: Bearer {{token}}
 Content-Type: application/json
 
 {
-    "command_name": "run_ansible_ping",
+    "command_name": "run_ansible",
     "host": "localhost",
     "port": 2224,
     "username": "root",
@@ -96,9 +98,31 @@ Content-Type: application/json
         "timeout_seconds": 300
     },
     "arguments": {
+        "playbook": "ping.yml",
         "inventory": "taipei/bm_multinode.ini",
         "limit": "node2"
     }
+}
+
+
+### Run long execution ansible
+# @name my_command
+POST {{base_url}}/api/v1/command/execution
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "command_name": "run_ansible_clock",
+  "host": "localhost",
+  "port": 2224,
+  "username": "root",
+  "ssh_config": "control_node",
+  "option": { "timeout_seconds": 300 },
+  "arguments": {
+    "inventory": "taipei/multinode.ini",
+    "clock_count": 30,
+    "clock_interval": 2
+  }
 }
 
 ### Run the deliberately-FAILING playbook (ping ok, then /bin/false)
@@ -110,7 +134,7 @@ Authorization: Bearer {{token}}
 Content-Type: application/json
 
 {
-    "command_name": "run_ansible_fail",
+    "command_name": "run_ansible",
     "host": "localhost",
     "port": 2224,
     "username": "root",
@@ -119,6 +143,7 @@ Content-Type: application/json
         "timeout_seconds": 300
     },
     "arguments": {
+        "playbook": "fail.yml",
         "inventory": "taipei/multinode.ini"
     }
 }

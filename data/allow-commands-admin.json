@@ -43,8 +43,8 @@
       "arguments": []
     },
     {
-      "command_name": "run_ansible_ping_all",
-      "description": "On the control_node, run run-ansible.sh ping.yml against an inventory (all hosts). Use ssh_config=control_node, host/port pointing at the control_node.",
+      "command_name": "run_ansible",
+      "description": "On the control_node, run run-ansible.sh with a chosen playbook against an inventory. The playbook is restricted by regex to those baked into the runner image. Optionally limit to a host/group pattern via ansible --limit. Use ssh_config=control_node, host/port pointing at the control_node.",
       "disconnects_ssh": false,
       "killable": true,
       "logged": true,
@@ -53,40 +53,7 @@
           "command": [
             "/Users/shannon/Documents/Code/antigravity-fastapi/deploy-service/ansible/run-ansible.sh",
             "--playbook",
-            "ping.yml",
-            "--inventory",
-            "{inventory}",
-            "--no-pull",
-            "--ssh-key",
-            "/Users/shannon/Documents/Code/antigravity-fastapi/deploy-service/data/ssh_keys/client_key",
-            "--log-dir",
-            "/var/log/ansible-runs",
-            "--run-id",
-            "{run_id}"
-          ]
-        }
-      ],
-      "arguments": [
-        {
-          "name": "inventory",
-          "type": "string",
-          "description": "Inventory path relative to the inventory repo root, e.g. taipei/multinode.ini",
-          "validation_regex": "^[a-zA-Z0-9._/-]+\\.(ini|ya?ml)$"
-        }
-      ]
-    },
-    {
-      "command_name": "run_ansible_ping",
-      "description": "Same as run_ansible_ping_all but limited to a host/group pattern via ansible --limit (e.g. node1).",
-      "disconnects_ssh": false,
-      "killable": true,
-      "logged": true,
-      "pipeline": [
-        {
-          "command": [
-            "/Users/shannon/Documents/Code/antigravity-fastapi/deploy-service/ansible/run-ansible.sh",
-            "--playbook",
-            "ping.yml",
+            "{playbook}",
             "--inventory",
             "{inventory}",
             "--limit",
@@ -103,6 +70,12 @@
       ],
       "arguments": [
         {
+          "name": "playbook",
+          "type": "string",
+          "description": "Playbook to run. Restricted to playbooks baked into the runner image.",
+          "validation_regex": "^(ping|fail|clock)\\.yml$"
+        },
+        {
           "name": "inventory",
           "type": "string",
           "description": "Inventory path relative to the inventory repo root, e.g. taipei/multinode.ini",
@@ -111,41 +84,9 @@
         {
           "name": "limit",
           "type": "string",
-          "description": "ansible --limit pattern, e.g. node1 or node1,node2",
+          "required": false,
+          "description": "Optional ansible --limit pattern, e.g. node1 or node1,node2. Omit to target all hosts.",
           "validation_regex": "^[a-zA-Z0-9._,-]+$"
-        }
-      ]
-    },
-    {
-      "command_name": "run_ansible_fail",
-      "description": "Runs fail.yml, which pings (ok) then runs /bin/false so the play fails. Use this to verify a non-zero exit_status propagates back through the API.",
-      "disconnects_ssh": false,
-      "killable": true,
-      "logged": true,
-      "pipeline": [
-        {
-          "command": [
-            "/Users/shannon/Documents/Code/antigravity-fastapi/deploy-service/ansible/run-ansible.sh",
-            "--playbook",
-            "fail.yml",
-            "--inventory",
-            "{inventory}",
-            "--no-pull",
-            "--ssh-key",
-            "/Users/shannon/Documents/Code/antigravity-fastapi/deploy-service/data/ssh_keys/client_key",
-            "--log-dir",
-            "/var/log/ansible-runs",
-            "--run-id",
-            "{run_id}"
-          ]
-        }
-      ],
-      "arguments": [
-        {
-          "name": "inventory",
-          "type": "string",
-          "description": "Inventory path relative to the inventory repo root, e.g. taipei/multinode.ini",
-          "validation_regex": "^[a-zA-Z0-9._/-]+\\.(ini|ya?ml)$"
         }
       ]
     },
@@ -164,7 +105,9 @@
             "--inventory",
             "{inventory}",
             "--extra-vars",
-            "clock_count={clock_count} clock_interval={clock_interval}",
+            "clock_count={clock_count}",
+            "--extra-vars",
+            "clock_interval={clock_interval}",
             "--no-pull",
             "--ssh-key",
             "/Users/shannon/Documents/Code/antigravity-fastapi/deploy-service/data/ssh_keys/client_key",
@@ -185,13 +128,15 @@
         {
           "name": "clock_count",
           "type": "int",
-          "description": "How many timestamps to print (e.g. 30).",
+          "required": false,
+          "description": "Optional: how many timestamps to print (e.g. 30). Omit to use the playbook default.",
           "validation_regex": "^[0-9]{1,4}$"
         },
         {
           "name": "clock_interval",
           "type": "int",
-          "description": "Seconds to wait between prints (e.g. 2).",
+          "required": false,
+          "description": "Optional: seconds to wait between prints (e.g. 2). Omit to use the playbook default.",
           "validation_regex": "^[0-9]{1,3}$"
         }
       ]
