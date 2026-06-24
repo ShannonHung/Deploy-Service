@@ -134,3 +134,14 @@ Authorization: Bearer {{token}}
 
 POST {{base_url}}/api/v1/command/execution/{{my_command_id}}/kill
 Authorization: Bearer {{token}}
+
+### Poll the formatted log trace (incremental; bump byte_offset/line_num across polls)
+@my_command_id = {{my_command.response.body.data.command_id}}
+
+GET {{base_url}}/api/v1/command/execution/{{my_command_id}}/trace/ui?byte_offset=0&line_num=1
+Authorization: Bearer {{token}}
+
+### Open the live log viewer in a browser (no auth on the HTML shell)
+# Paste the command_id and open in a browser:
+#   {{base_url}}/api/v1/command/execution/<command_id>/view
+GET {{base_url}}/api/v1/command/execution/{{my_command_id}}/view
