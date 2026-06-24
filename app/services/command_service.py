@@ -532,6 +532,24 @@ class CommandService:
         finally:
             conn.close()
 
+    def _apply_output_policy(self, logged: bool, success: bool, output: str) -> Optional[str]:
+        """Decide what output to persist on CommandState for a finished command.
+
+        Non-logged commands keep their full output (legacy behaviour). Logged
+        commands rely on the control_node file + /view for the full log, so we
+        persist nothing on success and only a short failure tail on failure.
+        """
+        if not logged:
+            return output
+        if success:
+            return None
+        tail_lines = settings.COMMAND_LOG_FAILURE_TAIL_LINES
+        if tail_lines <= 0:
+            return None
+        if not output:
+            return None
+        return "\n".join(output.split("\n")[-tail_lines:])
+
     async def _store_result(self, command_id: str, response: CommandExecutionResponse):
         """Persist a finished command's response into the existing Redis state machine with a new TTL."""
         ttl = settings.COMMAND_RESULT_TTL_SECONDS
@@ -711,10 +729,14 @@ class CommandService:
                     extra={"request_id": context.request_id, "username": context.username, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port}
                 )
                 
-                if returncode == 0:
-                    res = CommandExecutionResponse.success(command_id=command_id, exit_status=returncode, output=output)
+                success = returncode == 0
+                stored_output = self._apply_output_policy(
+                    context.cmd_config.logged, success, output,
+                )
+                if success:
+                    res = CommandExecutionResponse.success(command_id=command_id, exit_status=returncode, output=stored_output or "")
                 else:
-                    res = CommandExecutionResponse.failed(message="", exit_status=returncode, output=output, command_id=command_id)
+                    res = CommandExecutionResponse.failed(message="", exit_status=returncode, output=stored_output, command_id=command_id)
                 await self._store_result(command_id, res)
 
             except Exception as e:
