@@ -82,6 +82,8 @@ class CommandArgumentConfig(BaseModel):
     name: str
     type: str  # e.g., "int", "string"
     validation_regex: str = ""
+    required: bool = True  # when False, the arg may be omitted from the request
+                           # and any pipeline tokens referencing it are dropped.
 
 class PipelineStep(BaseModel):
     command: List[str]

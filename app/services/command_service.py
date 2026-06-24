@@ -350,6 +350,8 @@ class CommandService:
         for arg_conf in cmd_config.arguments:
             val = req.arguments.get(arg_conf.name)
             if val is None:
+                if not arg_conf.required:
+                    continue  # optional and omitted — skip; pipeline drops its tokens
                 raise CommandExecutionException(
                     f"Missing required argument: {arg_conf.name}",
                     detail={"argument": arg_conf.name},
@@ -394,24 +396,49 @@ class CommandService:
             part = part.replace("{run_id}", run_id)
         return part
 
+    def _strip_omitted_optionals(self, command: List[str], arguments: Dict[str, Any], arg_defs: list) -> List[str]:
+        """Remove pipeline tokens for optional args that weren't supplied.
+
+        For each optional (``required=False``) arg the request omitted, drop the
+        token containing its ``{name}`` placeholder AND the flag token directly
+        before it (so e.g. ``["--limit", "{limit}"]`` disappears entirely rather
+        than leaving a dangling ``--limit``). A flag is "directly before" when
+        the preceding token starts with ``-`` and carries no other placeholder.
+        """
+        omitted = {
+            arg.name for arg in arg_defs
+            if not arg.required and arguments.get(arg.name) is None
+        }
+        if not omitted:
+            return command
+        omitted_placeholders = {f"{{{name}}}" for name in omitted}
+
+        # Indices whose token references an omitted optional placeholder.
+        drop = set()
+        for i, tok in enumerate(command):
+            if any(ph in tok for ph in omitted_placeholders):
+                drop.add(i)
+                # Also drop the immediately-preceding flag (e.g. --limit).
+                if i > 0 and command[i - 1].startswith("-") and "{" not in command[i - 1]:
+                    drop.add(i - 1)
+        return [tok for i, tok in enumerate(command) if i not in drop]
+
     def _build_pipeline(self, context: ExecutionContext) -> List[List[str]]:
         """Resolve all {placeholder} tokens and return the final pipeline.
 
         Pure function: produces ``List[List[str]]`` with no side-effects or
-        I/O, making it trivially unit-testable.
+        I/O, making it trivially unit-testable. Optional args the request
+        omitted have their flag+value tokens stripped before resolution.
 
         Returns:
             A list of command arrays, e.g. ``[["ls", "-al"], ["grep", "ssh"]]``.
         """
+        args = context.raw_request.arguments
+        arg_defs = context.cmd_config.arguments
         return [
             [
-                self._resolve_command_part(
-                    part,
-                    context.raw_request.arguments,
-                    context.cmd_config.arguments,
-                    run_id=context.run_id,
-                )
-                for part in step.command
+                self._resolve_command_part(part, args, arg_defs, run_id=context.run_id)
+                for part in self._strip_omitted_optionals(step.command, args, arg_defs)
             ]
             for step in context.cmd_config.pipeline
         ]
