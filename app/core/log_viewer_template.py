@@ -392,6 +392,14 @@ LOG_VIEWER_HTML = """
             try {{
                 const sep = `{trace_url}`.includes('?') ? '&' : '?';
                 const res = await fetch(`{trace_url}${{sep}}byte_offset=${{currentByteOffset}}&line_num=${{currentLineNum}}&t=${{Date.now()}}`, {{ cache: 'no-store' }});
+                // Not logged in (no auth cookie/header): send the browser to the
+                // login page and come straight back to this viewer afterwards.
+                if (res.status === 401 || res.status === 403) {{
+                    if (timer) clearTimeout(timer);
+                    timer = null;
+                    window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+                    return;
+                }}
                 if (!res.ok) throw new Error(`HTTP ${{res.status}}`);
                 const json = await res.json();
                 if (!json.data || !json.data.lines) throw new Error("Invalid API response");

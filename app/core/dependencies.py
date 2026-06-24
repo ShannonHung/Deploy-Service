@@ -30,6 +30,35 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
 ACCESS_TOKEN_COOKIE = "access_token"
 
 
+def set_access_cookie(response, token: str, max_age: int) -> None:
+    """Set the access_token cookie used by HTML viewers. One definition shared
+    by POST /token and POST /login so their cookie attributes stay identical."""
+    response.set_cookie(
+        key=ACCESS_TOKEN_COOKIE,
+        value=token,
+        max_age=max_age,
+        httponly=True,
+        samesite="lax",
+        secure=False,  # served over http in dev; set True behind TLS in prod
+    )
+
+
+def safe_next_path(next_path: str | None, fallback: str = "/docs") -> str:
+    """Open-redirect guard for the login ``next`` param.
+
+    Only same-origin, absolute *paths* are allowed (must start with a single
+    '/'). Anything that could redirect off-site ('//host', 'http://host',
+    backslashes, missing leading slash) falls back to a safe local default.
+    """
+    if not next_path:
+        return fallback
+    if not next_path.startswith("/"):
+        return fallback
+    if next_path.startswith("//") or next_path.startswith("/\\"):
+        return fallback
+    return next_path
+
+
 def _validate_token(token: str, required: list[str]) -> User:
     """Decode a JWT and enforce scopes. Shared by the header-only and the
     cookie-or-header dependencies so both apply identical rules."""
