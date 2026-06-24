@@ -306,6 +306,7 @@ class CommandService:
             node_type_map=settings.BASTION_NODE_TYPE_MAP,
             bastion_type=bastion_type,
             ip_label=ip_label,
+            slash_map=settings.CLUSTER_SLASH_TYPE_MAP,
         )
         resolved = await resolver.resolve(req.host)
 
