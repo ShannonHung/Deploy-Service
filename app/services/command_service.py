@@ -48,6 +48,15 @@ def _get_semaphore() -> asyncio.Semaphore:
     return _execution_semaphore
 
 
+def _decode(stream: Any) -> str:
+    """Normalise an asyncssh stdout/stderr stream (bytes | str | None) to str."""
+    if not stream:
+        return ""
+    if isinstance(stream, bytes):
+        return stream.decode("utf-8")
+    return str(stream)
+
+
 class CommandService:
     def __init__(
         self,
@@ -655,8 +664,8 @@ class CommandService:
                 )
             
             # Connection is still alive — the command did NOT cause a disconnect.
-            out_str = result.stdout if isinstance(result.stdout, str) else result.stdout.decode('utf-8') if result.stdout else ""
-            err_str = result.stderr if isinstance(result.stderr, str) else result.stderr.decode('utf-8') if result.stderr else ""
+            out_str = _decode(result.stdout)
+            err_str = _decode(result.stderr)
             final_output = out_str + ("\n" + err_str if err_str and out_str else err_str)
                 
             logger.warning(
@@ -851,9 +860,9 @@ class CommandService:
             A tuple of ``(exit_code, merged_output_string)``.
         """
         stdout_data, stderr_data = await final_process.communicate()
-        out_str = stdout_data.decode('utf-8') if isinstance(stdout_data, bytes) else str(stdout_data) if stdout_data else ""
-        err_str = stderr_data.decode('utf-8') if isinstance(stderr_data, bytes) else str(stderr_data) if stderr_data else ""
-        
+        out_str = _decode(stdout_data)
+        err_str = _decode(stderr_data)
+
         final_output = out_str + ("\n" + err_str if err_str and out_str else err_str)
         return final_process.returncode, final_output
 
