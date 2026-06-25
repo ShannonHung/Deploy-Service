@@ -57,3 +57,69 @@ def test_retention_zero_disables_cleanup(tmp_path):
     res = _run(tmp_path, "--run-id", "run9", "--log-retention-days", "0")
     assert res.returncode == 0, res.stderr
     assert old.exists(), "retention 0 must disable cleanup"
+
+
+# ── Terminal marker (orphan-run recovery: log file as source of truth) ────────
+#
+# DRYRUN exits before docker, so the marker logic is exercised with a fake
+# `docker` on PATH (and `git`, since the script clones before running). The
+# script must, after the run, write the real ansible/docker exit code to:
+#   * a sidecar  <log-dir>/<run-id>.exit   (machine-parsed by deploy-service)
+#   * a final log line  "=== EXIT <code> ===" (human-visible in /view)
+
+def _run_with_fake_docker(tmp_path, exit_code, *extra):
+    """Run the script for real (no DRYRUN) but with fake git+docker on PATH so
+    no network/daemon is touched. The fake docker exits with `exit_code` and
+    prints a recognisable line first."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    # Fake git: make `git clone <repo> <dir>` create the inventory file the
+    # script validates, so it proceeds to the docker step.
+    (bindir / "git").write_text(
+        "#!/usr/bin/env bash\n"
+        'dest="${@: -1}"\n'
+        'mkdir -p "$dest/taipei"\n'
+        'printf "[all]\\nnode1\\n" > "$dest/taipei/multinode.ini"\n'
+    )
+    # Fake docker: print a marker line then exit with the requested code.
+    (bindir / "docker").write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "FAKE ANSIBLE OUTPUT"\n'
+        f"exit {exit_code}\n"
+    )
+    for f in ("git", "docker"):
+        os.chmod(bindir / f, 0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+    return subprocess.run(
+        ["bash", str(SCRIPT), "--playbook", "ping.yml", "--inventory",
+         "taipei/multinode.ini", "--no-pull", "--log-dir", str(tmp_path), *extra],
+        capture_output=True, text=True, env=env,
+    )
+
+
+def test_marker_written_on_success(tmp_path):
+    res = _run_with_fake_docker(tmp_path, 0, "--run-id", "ok-run")
+    assert res.returncode == 0, res.stderr
+    log = (tmp_path / "ok-run.log").read_text()
+    assert "FAKE ANSIBLE OUTPUT" in log
+    assert log.rstrip().endswith("=== EXIT 0 ===")
+    assert (tmp_path / "ok-run.exit").read_text().strip() == "0"
+
+
+def test_marker_written_on_failure_preserves_exit_code(tmp_path):
+    # The script must EXIT with the real ansible code (so callers waiting on it
+    # still see failure) AND record it in the marker/sidecar.
+    res = _run_with_fake_docker(tmp_path, 2, "--run-id", "bad-run")
+    assert res.returncode == 2, res.stderr
+    log = (tmp_path / "bad-run.log").read_text()
+    assert log.rstrip().endswith("=== EXIT 2 ===")
+    assert (tmp_path / "bad-run.exit").read_text().strip() == "2"
+
+
+def test_no_sidecar_without_run_id(tmp_path):
+    # Standalone use (no --run-id) keeps run.log; the log marker is still added,
+    # but no UUID sidecar is written (deploy-service is the only sidecar reader).
+    res = _run_with_fake_docker(tmp_path, 0)
+    assert res.returncode == 0, res.stderr
+    assert (tmp_path / "run.log").read_text().rstrip().endswith("=== EXIT 0 ===")
+    assert not list(tmp_path.glob("*.exit"))

@@ -11,8 +11,10 @@ from typing import List
 from ansi2html import Ansi2HTMLConverter
 from app.domain.pipeline_models import FormattedLogLine
 
-# GitLab style timestamps: [2024-03-08T12:00:00Z] or similar at line start
-_TS_REGEX = re.compile(r"^(\[?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\]?)")
+# GitLab style timestamps: [2024-03-08T12:00:00Z] or similar at line start.
+# Also consume any trailing whitespace so the multiplexer-prefix cleanup below
+# still anchors at the start of the line (GitLab emits "<ts> 00O \x1b[0K...").
+_TS_REGEX = re.compile(r"^(\[?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\]?)\s*")
 # GitLab section markers and clear-line codes (like [0K, [0G)
 _MARKER_REGEX = re.compile(r"\x1b\[[0-9;]*[GK]|section_(?:start|end):\d+:[^\r\n\u001b\[]+")
 
@@ -49,8 +51,8 @@ class LogRenderer:
 
             # 2. Clean log multiplexer noise (e.g., 00O, 01O+, 0K, 00O+ )
             # Sometimes GitLab runner prepends \x1b[0K (clear line) before the multiplexer noise
-            line = re.sub(r"^\x1b\[0K", "", line)
-            line = re.sub(r"^\d{1,2}[A-Za-z][\+\-]?\s?", "", line)
+            line = re.sub(r"^\s*\x1b\[0K", "", line)
+            line = re.sub(r"^\s*\d{1,2}[A-Za-z][\+\-]?\s?", "", line)
 
             # Strip section markers (but optionally keep the text)
             line = re.sub(r"section_start:\d+:[^\r\n\u001b\[]+(?:\r|(?:\x1b\[0K))?", "", line)

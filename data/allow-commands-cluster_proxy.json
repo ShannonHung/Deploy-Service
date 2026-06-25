@@ -1,53 +1,6 @@
 {
-  "name": "admin",
+  "name": "cluster_proxy",
   "allow_commands": [
-    {
-      "command_name": "reboot",
-      "description": "reboot",
-      "disconnects_ssh": true,
-      "killable": false,
-      "pipeline": [{ "command": ["reboot"] }],
-      "arguments": []
-    },
-    {
-      "command_name": "sleep",
-      "description": "sleep",
-      "disconnects_ssh": false,
-      "killable": true,
-      "pipeline": [{ "command": ["sleep", "{time}"] }],
-      "arguments": [
-        { "name": "time", "type": "int", "validation_regex": "^[0-9]+$" }
-      ]
-    },
-    {
-      "command_name": "list_file",
-      "description": "list file",
-      "disconnects_ssh": false,
-      "killable": true,
-      "pipeline": [
-        { "command": ["ls", "-al"] },
-        { "command": ["grep", "{key_word}"] }
-      ],
-      "arguments": [
-        {
-          "name": "key_word",
-          "type": "string",
-          "validation_regex": "^[a-zA-Z0-9._-]+$"
-        }
-      ]
-    },
-    {
-      "command_name": "whoami",
-      "description": "whoami",
-      "disconnects_ssh": false,
-      "killable": true,
-      "pipeline": [
-        {
-          "command": ["whoami"]
-        }
-      ],
-      "arguments": []
-    },
     {
       "command_name": "run_ansible",
       "description": "On the control_node, run run-ansible.sh with a chosen playbook against an inventory. The playbook is restricted by regex to those baked into the runner image. Optionally limit to a host/group pattern via ansible --limit. Use ssh_config=control_node, host/port pointing at the control_node.",

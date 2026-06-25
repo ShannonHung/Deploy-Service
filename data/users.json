@@ -15,5 +15,13 @@
         "scopes": [
             "deploy_api"
         ]
+    },
+    {
+        "account": "cluster_proxy",
+        "hashed_password": "$2b$12$dt1.mtroLYki1gxO0cE/gO5GNNdVetPpiXPm.8zEzFivRW.OftPZm",
+        "scopes": [
+            "deploy_api",
+            "command_api"
+        ]
     }
 ]

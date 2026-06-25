@@ -191,8 +191,19 @@ echo ">> Logs:    $LOG_FILE (tee'd from stdout)"
 # on Docker Desktop / macOS).
 #
 # The company image doesn't write an ansible log file, so we capture the
-# container's stdout/stderr and tee it to the host. `set -o pipefail` (above)
-# ensures a non-zero ansible exit still propagates through the tee.
+# container's stdout/stderr and tee it to the host.
+#
+# Terminal marker (orphan-run recovery): deploy-service treats this log as the
+# source of truth for the run's outcome. If the pod that launched the run dies,
+# the run keeps going here (setsid) and finishes; deploy-service later SSHes
+# back, reads the marker, and heals its Redis state. So we MUST always record
+# the real ansible exit code, even on failure:
+#   * append "=== EXIT <code> ===" to the log (human-visible in /view), and
+#   * write a <run_id>.exit sidecar (clean to parse) when a RUN_ID was given.
+# `set -e` would abort before we could write the marker on a non-zero exit, so
+# we capture the status via ${PIPESTATUS[0]} (the docker/ansible side of the
+# pipe — NOT tee's) and re-exit with it at the end.
+set +e
 docker run --rm \
   --add-host host.docker.internal:host-gateway \
   -v "$CLONE_DIR":/inventory:ro \
@@ -201,3 +212,20 @@ docker run --rm \
   -e ANSIBLE_COLLECTIONS_PATH=/collections \
   "$IMAGE" \
   "${CMD_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
+RUN_EXIT="${PIPESTATUS[0]}"
+set -e
+
+# Human-visible marker in the log itself (the viewer renders this line).
+echo "=== EXIT $RUN_EXIT ===" >> "$LOG_FILE"
+
+# Machine-readable sidecar, written atomically (tmp + mv) so a reader never
+# sees a half-written file. Only for deploy-service runs (RUN_ID set); the
+# sidecar name mirrors the log: <run_id>.exit beside <run_id>.log.
+if [[ -n "$RUN_ID" ]]; then
+  EXIT_FILE="$LOG_DIR/$RUN_ID.exit"
+  printf '%s\n' "$RUN_EXIT" > "$EXIT_FILE.tmp" && mv -f "$EXIT_FILE.tmp" "$EXIT_FILE"
+fi
+
+# Re-exit with the real ansible status so anything waiting on this script (the
+# fast path: deploy-service's asyncio.Task) still sees success/failure.
+exit "$RUN_EXIT"

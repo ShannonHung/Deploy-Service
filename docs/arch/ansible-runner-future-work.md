@@ -13,45 +13,98 @@ or stalls the request, and the failure is buried in ansible stdout — the servi
 only gets an exit code, so "GitLab down" vs "node down" vs "bad playbook" all
 look the same. This is the root cause behind several of the items below.
 
-## 1 + 2. Orphaned runs: state lives in one pod's memory  ← highest priority
+## 1 + 2. (Resolved) Orphaned runs: log file is now the source of truth
 
-**What is fine today:** the log viewer (`/view` → `/trace/ui`) and cross-pod
-`kill` already work from any pod, because they rebuild everything from Redis
+**What was always fine:** the log viewer (`/view` → `/trace/ui`) and cross-pod
+`kill` work from any pod, because they rebuild everything from Redis
 (`CommandState`: `run_log_path`, `resolved_ip`, `pgids`, `username`) and SSH back
 to the control_node. Reading the log is stateless. ✓
 
-**What breaks:** deciding "did it finish / succeed / fail" is owned by a single
-`asyncio.Task` living in the pod that started the run (it calls `_collect_output`
-then writes the result to Redis). If that pod restarts or dies:
+**What used to break — two separate holes:**
 
-- `run-ansible.sh` keeps running on the control_node (`setsid`) and the log keeps
-  growing — the work is NOT lost.
-- But no one writes the final result back to Redis, so `CommandState` is stuck
-  at `RUNNING` until its TTL expires. The run is "orphaned" from the API's view.
-- `COMMAND_MAX_RUNNING` / `COMMAND_MAX_CONCURRENCY` are also **per-pod**, not
-  global, so backpressure is weaker than it looks (N pods → N× the cap).
+- **(state)** Deciding "did it finish / succeed / fail" was owned by a single
+  `asyncio.Task` in the pod that started the run. If that pod died, no one wrote
+  the final result to Redis, so `CommandState` was stuck at `RUNNING` until TTL.
+- **(survival)** Worse: the run didn't even keep running. A logged run's
+  stdout/stderr flowed back over the SSH channel (`asyncssh.PIPE`). When
+  deploy-service died, the channel closed → `tee` got **SIGPIPE** → the SIGPIPE
+  cascade killed docker/ansible mid-run (exit **141** = 128+13). `setsid` gives
+  a new pgid (good for kills) but does NOT detach the inherited stdout fd, so it
+  didn't help here. The `killable` flag is irrelevant — the run dies purely
+  because its output is plumbed through the dying channel.
 
-### Proposed fix: make the log file the source of truth
+### Implemented fix
 
-This is the user's own suggestion and it matches how the viewer already works
-(SSH back and read a file). Plan:
+0. **Detach logged runs from the SSH channel so they SURVIVE** (the survival
+   hole). For logged commands `_build_step_wrapper` now wraps the step as
+   `setsid -w sh -c 'echo $$ >&2; echo READY >&2; exec "$@" > /dev/null 2>&1 < /dev/null' _ …`:
+   - `exec … > /dev/null 2>&1 < /dev/null` severs stdout/stderr/stdin from the
+     channel, so closing it can't SIGPIPE the run. The run **script** still
+     `tee`s to the log file; we redirect to `/dev/null` (not the log path) so we
+     don't double-write the file the script owns.
+   - Two-line stderr handshake **before** exec — PGID then `READY` — still
+     reaches the channel. `_execute_pipeline` waits for `READY`; if it never
+     arrives the command died before exec (script not found, log dir
+     unwritable), so we fail fast with `CommandExecutionException` instead of
+     hanging in RUNNING (blind-spot B). Non-logged commands are unchanged
+     (output still streams back; their output IS the result).
 
-1. `run-ansible.sh` writes a terminal marker when it finishes — e.g. append a
-   final line `=== EXIT <code> ===` to the log, OR write a sidecar
-   `<run_id>.exit` file containing the exit code. (Sidecar is cleaner to parse;
-   the log marker is human-visible in `/view`. Could do both.)
-2. `get_command_execution_result` (the poll endpoint): if Redis says `RUNNING`,
-   SSH back and check the marker/sidecar:
-   - no marker → still running.
-   - `EXIT 0` → success; lazily heal Redis (`mark_success`).
-   - `EXIT != 0` → failed; heal Redis (`mark_failed`, optionally with the log
-     tail per the existing `_apply_output_policy`).
-3. Result: any pod, any time (even after a full service restart) can recover the
-   true outcome from the control_node. The `asyncio.Task` becomes an optimization
-   (fast path) rather than the only writer.
+1. **`run-ansible.sh`** now records the real ansible exit code after the run
+   (captured via `${PIPESTATUS[0]}`, since ansible is the left side of the
+   `| tee` pipe; `set +e`/`set -e` around it so a failure still reaches the
+   marker, then `exit $RUN_EXIT` so the fast path still sees the true status):
+   - appends `=== EXIT <code> ===` to the log (human-visible in `/view`), and
+   - writes a `<run_id>.exit` sidecar atomically (`tmp` + `mv`), only when a
+     `--run-id` was supplied (i.e. a deploy-service run).
+2. **`get_command_execution_result`** (poll endpoint): if Redis is in a stuck
+   transient state (`RUNNING` **or** `KILLING`) **and** the command is `logged`
+   (`run_log_path` set), it SSHes back via `_read_run_exit_marker` and reads the
+   sidecar:
+   - absent/unparseable → still in flight, report the last-known state.
+   - `EXIT 0` → `_heal_from_marker` → `mark_success`.
+   - `EXIT != 0` → `mark_failed` (exit code surfaced).
+   The heal uses `update_if(condition=status in {RUNNING, KILLING})`, so a
+   concurrent fast-path write or a completed `kill` (which lands on the terminal
+   `KILLED`) always wins the race and is never overwritten (`KILLED`/`SUCCESS`/
+   `FAILED` are never resurrected). SSH failures during a heal are swallowed —
+   a transient control_node outage degrades to the last-known state, never a 5xx.
 
-Reuses the exact pattern the viewer already relies on. Independent of the
-viewer/auth/whitelist work; do it as its own change.
+   **Why `KILLING` is healed too** (found in manual testing): a `killable:false`
+   run, when the service shut down, was flipped to `KILLING` by
+   `kill_command`/`shutdown_gracefully` and then stranded there — it has no kill
+   path to reach `KILLED`. Two fixes: (a) `kill_command` now refuses a
+   non-killable command **before** any state transition (leaves it `RUNNING`),
+   and (b) the heal recovers `KILLING` so even a kill interrupted by a dying pod
+   reconciles to the real outcome.
+3. The `asyncio.Task` is now an **optimisation** (fast path), not the only
+   writer. Any pod, any time — even after a full service restart — recovers the
+   true outcome from the control_node.
+
+### `killable` semantics: system-automatic vs human override
+
+`killable: false` means **"the system must not kill this on its own"**, not
+"no one may ever kill this". The two callers are treated differently:
+
+- **Automatic** (`_timeout_wrapper`, `shutdown_gracefully`) call
+  `kill_command(...)` with no `force` → always respect `killable`.
+- **Human** (`POST /execution/{id}/kill`): a plain kill of a `killable:false`
+  command returns **409** (`"not killable. Retry with ?force=true"`) instead of
+  a misleading `accepted` (found in manual testing — the endpoint used to return
+  `accepted` while the service silently did nothing). An explicit
+  `?force=true` forwards `force=True` to `kill_command`, which bypasses the
+  killable guard and performs the real PGID kill. `disconnects_ssh` (reboot)
+  commands can't reach this path — they're fire-and-forget and never hold a
+  `RUNNING` async state, so the top-level `status != RUNNING` check rejects them.
+
+Reuses the viewer's "SSH back and read a file" pattern (shared
+`_connect_to_control_node` helper). Tests: `tests/unit/test_command_orphan_heal.py`
+and the marker tests in `tests/integration/test_run_ansible_script.py`.
+
+### Still per-pod (not addressed here)
+
+`COMMAND_MAX_RUNNING` / `COMMAND_MAX_CONCURRENCY` remain **per-pod**, not global
+(N pods → N× the cap). Genuinely global backpressure would need a shared counter
+(e.g. Redis) and is out of scope for the orphan fix.
 
 ## 3. (Deferred by the user) per-run `git clone` + `docker pull`
 

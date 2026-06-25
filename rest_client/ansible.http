@@ -160,6 +160,15 @@ Authorization: Bearer {{token}}
 POST {{base_url}}/api/v1/command/execution/{{my_command_id}}/kill
 Authorization: Bearer {{token}}
 
+### Force-kill a NON-killable run (human override).
+# A killable:false command is refused by a plain kill (409 "not killable;
+# retry with ?force=true"). timeout/shutdown always respect killable; only an
+# explicit ?force=true overrides it.
+@my_command_id = {{my_command.response.body.data.command_id}}
+
+POST {{base_url}}/api/v1/command/execution/{{my_command_id}}/kill?force=true
+Authorization: Bearer {{token}}
+
 ### Poll the formatted log trace (incremental; bump byte_offset/line_num across polls)
 @my_command_id = {{my_command.response.body.data.command_id}}
 

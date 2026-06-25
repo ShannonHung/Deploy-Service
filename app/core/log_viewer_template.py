@@ -299,6 +299,12 @@ LOG_VIEWER_HTML = """
             return n + ' B';
         }}
 
+        function escapeHtml(s) {{
+            return String(s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }}
+
         // Apply theme on load
         if (localStorage.getItem('theme') === 'light') {{
             setTheme('light');
@@ -366,8 +372,24 @@ LOG_VIEWER_HTML = """
             if (opts.reason === 'too_large') {{
                 jobStatusBadge.innerText = 'TOO LARGE';
                 heading = 'Log too large to display';
-                body = `This log has reached ${{formatBytes(opts.totalSize)}}, which exceeds the viewer's hard cap. Rendering it in the browser would make the page unresponsive.`;
+                body = `This log has reached ${{formatBytes(opts.totalSize)}}, which exceeds the viewer's hard cap. Rendering it in the browser would make the page unresponsive. You can still read the full log directly on the control node:`;
                 extraRows = `<div><span class="label">Trace size</span><code>${{formatBytes(opts.totalSize)}}</code></div>`;
+
+                // Where the full log lives — host/port/user/path, plus a
+                // copy-pasteable ssh + tail. Guard each field so a partial
+                // response still renders what it can.
+                if (opts.logHost) {{
+                    extraRows += `<div><span class="label">Host</span><code>${{escapeHtml(opts.logHost)}}${{opts.logPort ? ':' + opts.logPort : ''}}</code></div>`;
+                }}
+                if (opts.logFilePath) {{
+                    extraRows += `<div><span class="label">File</span><code>${{escapeHtml(opts.logFilePath)}}</code></div>`;
+                }}
+                if (opts.logHost && opts.logFilePath) {{
+                    const user = opts.logUser ? escapeHtml(opts.logUser) + '@' : '';
+                    const port = opts.logPort ? ' -p ' + opts.logPort : '';
+                    const sshCmd = `ssh ${{user}}${{escapeHtml(opts.logHost)}}${{port}} tail -f ${{escapeHtml(opts.logFilePath)}}`;
+                    extraRows += `<div><span class="label">Read it</span><code>${{sshCmd}}</code></div>`;
+                }}
             }} else {{
                 jobStatusBadge.innerText = 'UNAVAILABLE';
                 const detail = opts.err && opts.err.message ? opts.err.message : 'Unknown error';
@@ -416,7 +438,14 @@ LOG_VIEWER_HTML = """
                 // already-rendered lines visible. Bail before touching
                 // status badges so the panel's TOO LARGE label sticks.
                 if (data.too_large) {{
-                    showFatalError({{ reason: 'too_large', totalSize: data.total_size }});
+                    showFatalError({{
+                        reason: 'too_large',
+                        totalSize: data.total_size,
+                        logHost: data.log_host,
+                        logPort: data.log_port,
+                        logUser: data.log_user,
+                        logFilePath: data.log_file_path,
+                    }});
                     return;
                 }}
 

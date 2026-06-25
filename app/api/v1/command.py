@@ -156,6 +156,7 @@ async def view_command(command_id: str):
 async def kill_command_endpoint(
     command_id: str,
     request: Request,
+    force: bool = False,
     current_user: User = Depends(get_current_user(["command_api"])),
     svc: CommandService = Depends(get_command_service),
 ) -> ApiResponse[CommandExecutionResponse]:
@@ -173,7 +174,18 @@ async def kill_command_endpoint(
             detail={"command_id": command_id, "current_status": state.status},
         )
 
-    await svc.kill_command(command_id, message="Killed by user request.")
+    # A non-killable command (killable:false) is normally refused by the service
+    # — returning "accepted" would lie. So reject it here with a 409 that points
+    # the user at the override. `killable:false` means "the SYSTEM must not kill
+    # this on its own" (timeout/shutdown respect it); a human who explicitly
+    # passes ?force=true is making a deliberate decision and is allowed through.
+    if not state.killable and not force:
+        raise ConflictException(
+            "Command is not killable. Retry with ?force=true to override.",
+            detail={"command_id": command_id, "killable": False, "force_required": True},
+        )
+
+    await svc.kill_command(command_id, message="Killed by user request.", force=force)
 
     return ApiResponse(
         data=CommandExecutionResponse(

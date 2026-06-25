@@ -114,6 +114,13 @@ class CommandService:
     async def get_command_execution_result(self, command_id: str) -> CommandExecutionResponse:
         """Poll the current status / result for a previously submitted command from Redis.
 
+        Orphan-run recovery: if Redis still says RUNNING for a ``logged``
+        command, the originating pod may have died mid-run while
+        ``run-ansible.sh`` kept going on the control_node. We SSH back, read the
+        ``<run_id>.exit`` marker (the log is the source of truth), and lazily
+        heal the state. This makes the asyncio.Task (fast path) an optimisation,
+        not the only writer of the final result.
+
         Raises:
             NotFoundException: If the command_id does not exist in Redis.
         """
@@ -124,6 +131,13 @@ class CommandService:
                 f"Command {command_id} not found.",
                 detail={"command_id": command_id},
             ) from exc
+
+        # Heal stuck transient states (RUNNING, or KILLING that never resolved —
+        # e.g. a non-killable run flipped to KILLING on shutdown, or the killing
+        # pod died) from the control_node marker. Terminal states are left alone.
+        if state.status in (CommandStatus.RUNNING, CommandStatus.KILLING) and state.run_log_path:
+            state = await self._heal_from_marker(state)
+
         return CommandExecutionResponse(
             status=state.status,
             command_id=state.command_id,
@@ -136,6 +150,130 @@ class CommandService:
             pgids=state.pgids,
         )
 
+    async def _connect_to_control_node(self, state: CommandState) -> asyncssh.SSHClientConnection:
+        """Open an SSH connection back to the control_node for a stored run.
+
+        Shared by the log viewer (``_read_remote_log``) and orphan-run recovery
+        (``_read_run_exit_marker``): both rebuild the connection purely from the
+        persisted ``CommandState`` (resolved_ip / port / username / ssh_config),
+        which is what makes them work from any pod.
+
+        Raises:
+            UpstreamTimeoutException / UpstreamUnavailableException:
+                SSH connect failure (mirrors ``_connect``).
+        """
+        ssh_config = self._load_ssh_config(state.ssh_config)
+        authenticator = create_authenticator(ssh_config)
+        conn_kwargs = authenticator.get_connect_kwargs()
+        try:
+            return await asyncio.wait_for(
+                asyncssh.connect(
+                    host=state.resolved_ip, port=state.port,
+                    username=state.username, **conn_kwargs,
+                ),
+                timeout=settings.SSH_CONNECT_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            raise UpstreamTimeoutException(
+                f"SSH connect to control_node timed out for {state.command_id}.",
+                detail={"command_id": state.command_id},
+            ) from exc
+        except (OSError, asyncssh.Error) as exc:
+            raise UpstreamUnavailableException(
+                f"SSH connect to control_node failed for {state.command_id}: {exc}",
+                detail={"command_id": state.command_id},
+            ) from exc
+
+    def _exit_marker_path(self, run_log_path: str) -> str:
+        """Sidecar path for a run's exit code: ``<run_id>.log`` → ``<run_id>.exit``."""
+        if run_log_path.endswith(".log"):
+            return run_log_path[: -len(".log")] + ".exit"
+        return run_log_path + ".exit"
+
+    async def _read_run_exit_marker(self, state: CommandState) -> Optional[int]:
+        """SSH to the control_node and read the run's exit-code sidecar.
+
+        Returns the integer exit code if ``run-ansible.sh`` has finished and
+        written ``<run_id>.exit``; ``None`` if the file is absent (run still in
+        flight) or its contents are unparseable. The path is server-generated;
+        ``shlex.quote`` keeps the anti-injection guarantee regardless.
+
+        Raises:
+            UpstreamTimeoutException / UpstreamUnavailableException:
+                SSH connect failure (propagated; the caller decides whether to
+                fall back to the last-known state).
+        """
+        marker_path = self._exit_marker_path(state.run_log_path)
+        conn = await self._connect_to_control_node(state)
+        try:
+            quoted = shlex.quote(marker_path)
+            res = await conn.run(f"cat {quoted}", check=False)
+            if res.exit_status != 0:
+                return None  # sidecar not written yet → still running
+            raw = str(res.stdout).strip() if res.stdout else ""
+            try:
+                return int(raw)
+            except ValueError:
+                # Half-written or corrupt marker — treat as not-yet-final.
+                logger.warning(
+                    f"Unparseable exit marker for {state.command_id}: {raw!r}",
+                    extra={"command_id": state.command_id},
+                )
+                return None
+        finally:
+            conn.close()
+
+    async def _heal_from_marker(self, state: CommandState) -> CommandState:
+        """Lazily reconcile a stuck transient state from the control_node marker.
+
+        Applies to RUNNING and KILLING. Reads ``<run_id>.exit``; if present,
+        transitions Redis to SUCCESS / FAILED via ``update_if`` gated on
+        ``status in (RUNNING, KILLING)`` — so a concurrent fast-path write or a
+        completed kill (which lands on the terminal KILLED) always wins the race
+        and is never overwritten. Returns the (possibly) refreshed state. SSH
+        failures are swallowed — a transient control_node outage must not turn a
+        poll into a 5xx; the caller keeps reporting the last-known state until
+        the next poll.
+        """
+        try:
+            code = await self._read_run_exit_marker(state)
+        except BaseAppException as exc:
+            logger.info(
+                f"Heal read failed for {state.command_id}; reporting last-known state: {exc}",
+                extra={"command_id": state.command_id},
+            )
+            return state
+        if code is None:
+            return state  # no marker yet — genuinely still running
+
+        success = code == 0
+        # Reuse the existing output policy: on failure, surface a short tail of
+        # the log; on success, nothing (the full log lives in /view).
+        async def updater(s: CommandState):
+            if success:
+                s.mark_success(code, "")
+            else:
+                s.mark_failed(
+                    f"Recovered from control_node marker: exit {code}.",
+                    exit_code=code,
+                )
+
+        healed = await self.repo.update_if(
+            state.command_id,
+            condition=lambda s: s.status in (CommandStatus.RUNNING, CommandStatus.KILLING),
+            updater=updater,
+            ttl_seconds=settings.COMMAND_RESULT_TTL_SECONDS,
+        )
+        if healed:
+            logger.info(
+                f"Healed orphaned run {state.command_id} from marker: exit {code} "
+                f"({'success' if success else 'failed'}).",
+                extra={"command_id": state.command_id},
+            )
+            return await self.repo.get(state.command_id)
+        # Lost the race (fast path / kill already wrote a terminal state).
+        return await self.repo.get(state.command_id)
+
     async def _read_remote_log(self, state: CommandState, byte_offset: int) -> tuple[int, str]:
         """SSH to the control_node and read the run log tail.
 
@@ -147,28 +285,8 @@ class CommandService:
             UpstreamTimeoutException / UpstreamUnavailableException:
                 SSH connect failure when reading the log (mirrors ``_connect``).
         """
-        ssh_config = self._load_ssh_config(state.ssh_config)
-        authenticator = create_authenticator(ssh_config)
-        conn_kwargs = authenticator.get_connect_kwargs()
         path = state.run_log_path
-        try:
-            conn = await asyncio.wait_for(
-                asyncssh.connect(
-                    host=state.resolved_ip, port=state.port,
-                    username=state.username, **conn_kwargs,
-                ),
-                timeout=settings.SSH_CONNECT_TIMEOUT_SECONDS,
-            )
-        except asyncio.TimeoutError as exc:
-            raise UpstreamTimeoutException(
-                f"SSH connect to read log timed out for {state.command_id}.",
-                detail={"command_id": state.command_id},
-            ) from exc
-        except (OSError, asyncssh.Error) as exc:
-            raise UpstreamUnavailableException(
-                f"SSH connect to read log failed for {state.command_id}: {exc}",
-                detail={"command_id": state.command_id},
-            ) from exc
+        conn = await self._connect_to_control_node(state)
         try:
             # asyncssh's conn.run takes ONE command string, not argv. The path
             # is server-generated, but shlex.quote keeps the anti-injection
@@ -215,10 +333,14 @@ class CommandService:
         total_size, new_text = await self._read_remote_log(state, byte_offset)
 
         if total_size > settings.COMMAND_LOG_HARD_CAP_BYTES:
+            # Give up rendering, but tell the user exactly where to read the full
+            # log on the control_node (ssh + tail), since the browser can't.
             return CommandTraceResponse(
                 command_id=command_id, status=status,
                 next_byte_offset=byte_offset, next_line_num=line_num,
                 lines=[], total_size=total_size, too_large=True,
+                log_host=state.resolved_ip, log_port=state.port,
+                log_user=state.username, log_file_path=state.run_log_path,
             )
 
         size_warning = total_size > settings.COMMAND_LOG_SOFT_CAP_BYTES
@@ -603,13 +725,53 @@ class CommandService:
         if not updated:
             logger.info(f"Skipping result storage for {command_id}; state was not RUNNING (possibly killed).")
 
+    def _build_step_wrapper(self, run_log_path: Optional[str]) -> List[str]:
+        """Build the ``setsid ... sh -c <script> _`` wrapper for one pipeline step.
+
+        ANTI-INJECTION ARCHITECTURE NOTE (unchanged):
+        User arguments are appended as positional args to ``sh -c`` and consumed
+        via ``"$@"``; ``shlex.join`` quotes them so ``sh`` treats them as literal
+        strings, immune to ``$()`` / ``\\n`` expansion. The ``sh -c`` exists to
+        emit the PGID (``echo $$``) for precise lifecycle/timeout kills.
+
+        Two modes:
+        * ``run_log_path is None`` (non-logged): output streams back over the SSH
+          channel (``asyncssh.PIPE``), as before — these commands are short and
+          their output IS the result.
+        * ``run_log_path`` set (logged, e.g. ansible): the run's stdout/stderr
+          are severed from the SSH channel (redirected to ``/dev/null``) and
+          stdin detached (``< /dev/null``). This is what lets the run SURVIVE
+          deploy-service going away — its output no longer flows through the SSH
+          channel, so closing that channel can't SIGPIPE-cascade the process to
+          death (the exit-141 bug). The run script itself ``tee``s its output to
+          the control_node log file, and the viewer/heal read that file over a
+          separate SSH connection, so nothing is lost. (We redirect to
+          ``/dev/null`` rather than the log file precisely so we don't
+          double-write the file the script already owns.)
+
+          A two-line stderr handshake is emitted BEFORE exec (so it reaches the
+          channel even though exec's output is redirected): the PGID, then a
+          literal ``READY``. ``_execute_pipeline`` waits for ``READY`` to confirm
+          the command actually reached exec — if it never arrives (script not
+          found, log dir unwritable, etc.) the run is a start-up failure and is
+          reported as such instead of hanging in RUNNING (blind-spot B).
+        """
+        if not run_log_path:
+            return ["setsid", "-w", "sh", "-c", 'echo $$ >&2; exec "$@"', "_"]
+        script = (
+            'echo $$ >&2; echo READY >&2; '
+            'exec "$@" > /dev/null 2>&1 < /dev/null'
+        )
+        return ["setsid", "-w", "sh", "-c", script, "_"]
+
     async def _execute_pipeline(self, context: ExecutionContext, command_id: str, cmd_str_preview: str):
         """Spawn each pipeline step on the remote host and capture PGIDs.
 
-        Each step is wrapped with ``setsid -w sh -c 'echo $$ >&2; exec "$@"'``
-        to create an isolated process group whose PGID can be used for
-        precise timeout kills.  Steps are chained via Python-side stdin/stdout
-        piping (not shell ``|``) to prevent pipe-based injection.
+        Each step is wrapped (see ``_build_step_wrapper``) to create an isolated
+        process group whose PGID can be used for precise timeout kills. Steps are
+        chained via Python-side stdin/stdout piping (not shell ``|``) to prevent
+        pipe-based injection. For logged commands the wrapper detaches the run's
+        output to the control_node log file so it survives a channel close.
 
         Returns:
             The final ``asyncssh.SSHClientProcess`` whose output should be
@@ -619,21 +781,17 @@ class CommandService:
         if not entry:
             return 1, ""
 
+        # Logged commands detach their output to the log file (survive channel
+        # close); non-logged stream back as before.
+        detached = bool(context.run_log_path)
         processes = []
         pgids = []
         prev_stdout = None
 
         for i, cmd_args in enumerate(context.pipeline_cmds):
-            # ANTI-INJECTION ARCHITECTURE NOTE:
-            # We strictly pass the user arguments as positional arguments to `sh -c` using the `"$@"` array interpolation.
-            # `shlex.join(full_cmd)` translates these discrete string array items into safely quoted terms before sending to SSH.
-            # Example: ["grep", "val with $(rm -rf) space"] -> setsid -w sh -c '...' _ grep 'val with $(rm -rf) space'
-            # Because the string is bound in single quotes natively by shlex, 'sh' treats the argument exclusively as a literal string.
-            # This makes our execution mathematically immune to dynamic shell expansion escapes (like `$()`, `\n`).
-            # We retain the `sh -c` purely to capture the PGID (`echo $$`) for accurate lifecycle management and timeouts.
-            wrapper = ["setsid", "-w", "sh", "-c", 'echo $$ >&2; exec "$@"', "_"]
+            wrapper = self._build_step_wrapper(context.run_log_path if detached else None)
             full_cmd = wrapper + cmd_args
-            
+
             try:
                 command_str = shlex.join(full_cmd)
                 p = await context.conn.create_process(
@@ -645,7 +803,7 @@ class CommandService:
             except Exception as e:
                 logger.error(f"Failed to create process: {e}", extra={"request_id": context.request_id, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port})
                 raise
-            
+
             processes.append(p)
             pgid_str = await p.stderr.readline()
             if pgid_str:
@@ -653,7 +811,21 @@ class CommandService:
                     pgids.append(int(pgid_str.strip()))
                 except Exception:
                     logger.error(f"Could not parse PGID from: {pgid_str}", extra={"request_id": context.request_id, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port})
-            
+
+            # Blind-spot B: for a detached (logged) run, the run's own output no
+            # longer comes back over the channel, so the ONLY way to know it
+            # actually started is the READY handshake line. If it's missing the
+            # command died before exec (script not found, log dir unwritable) —
+            # fail fast instead of leaving the run hung in RUNNING.
+            if detached:
+                ready = await p.stderr.readline()
+                if (ready or "").strip() != "READY":
+                    raise CommandExecutionException(
+                        "Run failed to start on the control_node "
+                        "(no READY handshake; check the run script path and log dir).",
+                        detail={"command_id": command_id},
+                    )
+
             prev_stdout = p.stdout
 
         entry.processes = processes
@@ -856,25 +1028,52 @@ class CommandService:
 
         return await self._handle_async_execution(context, command_id=command_id)
 
-    async def kill_command(self, command_id: str, message: str = "Killed"):
+    async def kill_command(self, command_id: str, message: str = "Killed", force: bool = False):
         """Terminate a running command using two-phase PGID-based kill.
-        
+
         Phase 1: ``kill -TERM -{pgid}`` (soft kill).
         Phase 2: After a grace period, ``kill -KILL -{pgid}``.
-        
+
         Transitions state: RUNNING -> KILLING -> KILLED.
+
+        ``force`` is a HUMAN override: a user who explicitly asks to kill a
+        ``killable: false`` command (via ``POST /kill?force=true``) bypasses the
+        killable guard. Automatic callers — the timeout wrapper and
+        ``shutdown_gracefully`` — never pass ``force``, so they keep respecting
+        ``killable`` (the flag's purpose is "the system must not kill this on its
+        own", not "no one may ever kill this").
         """
-        # 1. Atomic State Transition to KILLING
-        # Use update_if to ensure we only start killing if it's currently RUNNING.
         ttl = settings.COMMAND_RESULT_TTL_SECONDS
-        
+
+        # 0. Refuse to kill a non-killable command UNLESS a human forced it. This
+        # MUST happen before any state transition: flipping to KILLING and then
+        # bailing strands the command in KILLING forever (it has no kill path to
+        # reach KILLED). We leave it RUNNING so the marker heal can later resolve
+        # its true outcome.
+        if not force:
+            entry = _local_running_commands.get(command_id)
+            if entry is not None:
+                is_killable = entry.killable
+            else:
+                try:
+                    is_killable = (await self.repo.get(command_id)).killable
+                except CommandExecutionException:
+                    return
+            if not is_killable:
+                logger.warning(
+                    f"Command {command_id} is not killable; leaving state untouched.",
+                    extra={"command_id": command_id},
+                )
+                return
+
+        # 1. Atomic State Transition to KILLING (only from RUNNING).
         success = await self.repo.update_if(
             command_id,
             condition=lambda s: s.status == CommandStatus.RUNNING,
             updater=lambda s: s.mark_killing(message),
             ttl_seconds=ttl
         )
-        
+
         if not success:
             logger.info(f"Kill request aborted for {command_id}: Command is not in RUNNING state.")
             return
@@ -883,9 +1082,6 @@ class CommandService:
         # Try Local Kill First
         entry = _local_running_commands.get(command_id)
         if entry:
-            if not entry.killable:
-                logger.warning(f"Command {command_id} is not killable.", extra={"command_id": command_id})
-                return
             await self._do_kill_via_connection(entry.conn, entry.pgids, command_id)
             await self.repo.update(command_id, lambda s: s.mark_killed(message), ttl)
             return
@@ -896,10 +1092,6 @@ class CommandService:
         except CommandExecutionException:
             return
 
-        if not state.killable:
-            logger.warning(f"Command {command_id} is not killable.", extra={"command_id": command_id})
-            return
-            
         if not state.pgids:
             # If no PGIDs yet, we've already marked it as KILLING,
             # so the async task will eventually hit _store_result and be blocked.

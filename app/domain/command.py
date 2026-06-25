@@ -170,6 +170,13 @@ class CommandTraceResponse(BaseModel):
     total_size: int = 0
     size_warning: bool = False
     too_large: bool = False
+    # Where the full log physically lives on the control_node. Populated only on
+    # the `too_large` bail-out so the user can read it directly (ssh + tail);
+    # left None on normal slices to keep the response lean.
+    log_host: Optional[str] = None
+    log_port: Optional[int] = None
+    log_user: Optional[str] = None
+    log_file_path: Optional[str] = None
 
 
 class RunningCommandsResponse(BaseModel):

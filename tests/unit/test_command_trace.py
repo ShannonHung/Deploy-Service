@@ -66,6 +66,40 @@ async def test_trace_hard_cap_stops_serving_lines(monkeypatch):
     assert resp.lines == []
 
 
+async def test_trace_hard_cap_reports_where_to_read_the_log(monkeypatch):
+    # When the viewer gives up (too_large), it must tell the user WHERE the full
+    # log lives so they can read it directly on the control_node: the host/ip,
+    # port, SSH account, and the file path.
+    get_settings.cache_clear()
+    svc = _svc_with_state(_state(
+        resolved_ip="10.0.0.7", port=2224, username="root",
+        run_log_path="/var/log/ansible-runs/c1.log",
+    ))
+    big = get_settings().COMMAND_LOG_HARD_CAP_BYTES + 1
+    monkeypatch.setattr(
+        svc, "_read_remote_log", AsyncMock(return_value=(big, "x\n")),
+    )
+    resp = await svc.get_command_trace("c1", byte_offset=0, line_num=1)
+    assert resp.too_large is True
+    assert resp.log_host == "10.0.0.7"
+    assert resp.log_port == 2224
+    assert resp.log_user == "root"
+    assert resp.log_file_path == "/var/log/ansible-runs/c1.log"
+
+
+async def test_trace_normal_response_omits_location_fields(monkeypatch):
+    # The location is only meaningful on the too_large bail-out; normal slices
+    # leave them None to keep the response lean.
+    svc = _svc_with_state(_state())
+    monkeypatch.setattr(
+        svc, "_read_remote_log",
+        AsyncMock(return_value=(18, "line one\nline two\n")),
+    )
+    resp = await svc.get_command_trace("c1", byte_offset=0, line_num=1)
+    assert resp.log_host is None
+    assert resp.log_file_path is None
+
+
 async def test_read_remote_log_calls_conn_run_with_single_command_string(monkeypatch):
     """asyncssh's conn.run takes ONE command string, not argv. Passing argv
     blew up with 'create_session() takes 2-3 positional arguments but 6 given'.

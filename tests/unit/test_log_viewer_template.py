@@ -20,3 +20,13 @@ def test_template_formats_for_command_viewer():
     )
     assert "/api/v1/command/execution/c1/trace/ui" in html
     assert "killed" in html
+
+
+def test_too_large_panel_renders_log_location():
+    # On the hard-cap bail-out, the panel must tell the user where to read the
+    # full log (host/port/user/path) — ideally as a copy-pasteable ssh + tail.
+    # The template's JS must reference the trace response's location fields.
+    for field in ("log_host", "log_port", "log_user", "log_file_path"):
+        assert field in LOG_VIEWER_HTML, f"template must surface {field}"
+    # And it should compose them into a usable command hint.
+    assert "ssh" in LOG_VIEWER_HTML.lower()
