@@ -99,13 +99,13 @@ def _ctx_for_build(args, run_id=None):
 
 def test_build_pipeline_keeps_supplied_optional():
     svc = CommandService(repo=None, inventory_repo=None)
-    flat = svc._build_pipeline(_ctx_for_build({"inventory": "a/b.ini", "limit": "node1"}))[0]
+    flat = svc._pipeline_builder.build(_ctx_for_build({"inventory": "a/b.ini", "limit": "node1"}))[0]
     assert flat == ["/x/run-ansible.sh", "--inventory", "a/b.ini", "--limit", "node1"]
 
 
 def test_build_pipeline_drops_omitted_optional_flag_and_value():
     svc = CommandService(repo=None, inventory_repo=None)
-    flat = svc._build_pipeline(_ctx_for_build({"inventory": "a/b.ini"}))[0]
+    flat = svc._pipeline_builder.build(_ctx_for_build({"inventory": "a/b.ini"}))[0]
     # --limit and its {limit} value must both be gone; required parts stay.
     assert flat == ["/x/run-ansible.sh", "--inventory", "a/b.ini"]
     assert "--limit" not in flat

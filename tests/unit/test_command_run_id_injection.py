@@ -38,7 +38,7 @@ def test_logged_command_resolves_run_id_placeholder():
         arguments=[],
     )
     ctx = _ctx(cfg, run_id="abc-123")
-    pipeline = _svc()._build_pipeline(ctx)
+    pipeline = _svc()._pipeline_builder.build(ctx)
     flat = pipeline[0]
     assert "{run_id}" not in flat
     assert "abc-123" in flat

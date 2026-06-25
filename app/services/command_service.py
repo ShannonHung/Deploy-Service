@@ -24,6 +24,7 @@ from app.repositories.ssh_auth_repository import create_authenticator
 from app.repositories.command_state_repository import CommandStateRepository
 from app.repositories.inventory_repository import InventoryRepository
 from app.repositories.host_resolver import ResolvedHost, create_host_resolver
+from app.services.pipeline_builder import PipelineBuilder
 from app.core.exceptions import (
     CommandExecutionException,
     UpstreamTimeoutException,
@@ -92,6 +93,7 @@ class CommandService:
     ):
         self.repo = repo
         self.inventory_repo = inventory_repo
+        self._pipeline_builder = PipelineBuilder()
 
     def _validate_anti_injection(self, user_input: str):
         """Early-rejection layer: block inputs containing shell meta-characters.
@@ -541,68 +543,6 @@ class CommandService:
         """Control_node path where run-ansible.sh tees this run's log."""
         return f"{settings.COMMAND_LOG_DIR}/{command_id}.log"
 
-    def _resolve_command_part(self, part: str, arguments: Dict[str, Any], arg_defs: List[CommandArgumentConfig], run_id: Optional[str] = None) -> str:
-        """Replace {placeholder} tokens in a single command part.
-
-        User-argument placeholders come from ``arguments``/``arg_defs``.
-        ``{run_id}`` is server-injected (never a user argument) and resolved
-        from ``run_id`` when provided.
-        """
-        for arg in arg_defs:
-            placeholder = f"{{{arg.name}}}"
-            if placeholder in part:
-                part = part.replace(placeholder, str(arguments[arg.name]))
-        if run_id is not None and "{run_id}" in part:
-            part = part.replace("{run_id}", run_id)
-        return part
-
-    def _strip_omitted_optionals(self, command: List[str], arguments: Dict[str, Any], arg_defs: List[CommandArgumentConfig]) -> List[str]:
-        """Remove pipeline tokens for optional args that weren't supplied.
-
-        For each optional (``required=False``) arg the request omitted, drop the
-        token containing its ``{name}`` placeholder AND the flag token directly
-        before it (so e.g. ``["--limit", "{limit}"]`` disappears entirely rather
-        than leaving a dangling ``--limit``). A flag is "directly before" when
-        the preceding token starts with ``-`` and carries no other placeholder.
-        """
-        omitted = {
-            arg.name for arg in arg_defs
-            if not arg.required and arguments.get(arg.name) is None
-        }
-        if not omitted:
-            return command
-        omitted_placeholders = {f"{{{name}}}" for name in omitted}
-
-        # Indices whose token references an omitted optional placeholder.
-        drop = set()
-        for i, tok in enumerate(command):
-            if any(ph in tok for ph in omitted_placeholders):
-                drop.add(i)
-                # Also drop the immediately-preceding flag (e.g. --limit).
-                if i > 0 and command[i - 1].startswith("-") and "{" not in command[i - 1]:
-                    drop.add(i - 1)
-        return [tok for i, tok in enumerate(command) if i not in drop]
-
-    def _build_pipeline(self, context: ExecutionContext) -> List[List[str]]:
-        """Resolve all {placeholder} tokens and return the final pipeline.
-
-        Pure function: produces ``List[List[str]]`` with no side-effects or
-        I/O, making it trivially unit-testable. Optional args the request
-        omitted have their flag+value tokens stripped before resolution.
-
-        Returns:
-            A list of command arrays, e.g. ``[["ls", "-al"], ["grep", "ssh"]]``.
-        """
-        args = context.raw_request.arguments
-        arg_defs = context.cmd_config.arguments
-        return [
-            [
-                self._resolve_command_part(part, args, arg_defs, run_id=context.run_id)
-                for part in self._strip_omitted_optionals(step.command, args, arg_defs)
-            ]
-            for step in context.cmd_config.pipeline
-        ]
-
     async def _connect(self, context: ExecutionContext, req: CommandExecutionRequest) -> asyncssh.SSHClientConnection:
         """Establish an SSH connection to the target host.
 
@@ -1028,7 +968,7 @@ class CommandService:
         Coordinates the full lifecycle:
           1. ``_check_capacity``    — backpressure gate.
           2. ``_prepare_execution`` — validate, resolve host, build context.
-          3. ``_build_pipeline``    — resolve argument placeholders.
+          3. ``_pipeline_builder.build`` — resolve argument placeholders.
           4. ``_connect``           — establish SSH session.
           5. Route to ``_handle_fire_and_forget`` or ``_handle_async_execution``.
 
@@ -1050,7 +990,7 @@ class CommandService:
             context.run_id = command_id
             context.run_log_path = self._compute_log_path(command_id)
 
-        context.pipeline_cmds = self._build_pipeline(context)
+        context.pipeline_cmds = self._pipeline_builder.build(context)
 
         conn = await self._connect(context, req)
         context.conn = conn
