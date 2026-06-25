@@ -94,10 +94,6 @@ if [[ -z "$PLAYBOOK" || -z "$INVENTORY" ]]; then
   usage
   exit 2
 fi
-if [[ ! -f "$SSH_KEY" ]]; then
-  echo "Error: ssh key not found: $SSH_KEY" >&2
-  exit 2
-fi
 
 # ── Per-run log file + self-cleaning ──────────────────────────────────────────
 # RUN_ID is supplied by deploy-service (a UUID) and becomes a filename, so we
@@ -203,6 +199,15 @@ echo ">> Logs:    $LOG_FILE (tee'd from stdout)"
 # `set -e` would abort before we could write the marker on a non-zero exit, so
 # we capture the status via ${PIPESTATUS[0]} (the docker/ansible side of the
 # pipe — NOT tee's) and re-exit with it at the end.
+# The SSH key is only consumed by the docker run below (bind-mounted into the
+# ansible container). Validate it here — after DRYRUN and arg/inventory checks —
+# so dry-run and unit tests that never reach docker don't require a real key.
+# SKIP_SSH_KEY_CHECK=1 lets fake-docker tests exercise the run path without one.
+if [[ "${SKIP_SSH_KEY_CHECK:-0}" != "1" && ! -f "$SSH_KEY" ]]; then
+  echo "Error: ssh key not found: $SSH_KEY" >&2
+  exit 2
+fi
+
 set +e
 docker run --rm \
   --add-host host.docker.internal:host-gateway \

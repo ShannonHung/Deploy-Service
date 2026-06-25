@@ -68,9 +68,11 @@ def test_login_rejects_offsite_next(client):
     assert r.headers["location"].startswith("/")
 
 
+@pytest.mark.e2e
 def test_login_then_view_trace_authorised(client):
     # Full browser flow: login (cookie) -> trace/ui authorised (404 unknown id,
-    # not 401).
+    # not 401). Hits the SSH command API, which reads command state from Redis,
+    # so this needs a real Redis — hence e2e (skipped unless RUN_E2E=1).
     client.post(
         "/login",
         data={"username": "test_admin", "password": "secret"},

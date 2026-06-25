@@ -89,7 +89,13 @@ def _run_with_fake_docker(tmp_path, exit_code, *extra):
     )
     for f in ("git", "docker"):
         os.chmod(bindir / f, 0o755)
-    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+    # The fake docker never reads the SSH key, so skip the script's key-existence
+    # guard — this test only exercises the log-marker / exit-code path.
+    env = {
+        **os.environ,
+        "PATH": f"{bindir}:{os.environ['PATH']}",
+        "SKIP_SSH_KEY_CHECK": "1",
+    }
     return subprocess.run(
         ["bash", str(SCRIPT), "--playbook", "ping.yml", "--inventory",
          "taipei/multinode.ini", "--no-pull", "--log-dir", str(tmp_path), *extra],
