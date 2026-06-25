@@ -1,0 +1,16 @@
+---
+# One clock tick — included once per iteration by clock.yml. Kept in its own
+# file so each tick is a self-contained set of tasks that ansible flushes to
+# stdout the moment it finishes (that's what makes the viewer stream live).
+- name: "Print current time (tick {{ tick_num }})"
+  ansible.builtin.command: 'date "+%Y-%m-%d %H:%M:%S"'
+  changed_when: false
+  register: tick_now
+
+- name: "Show tick {{ tick_num }}"
+  ansible.builtin.debug:
+    msg: "tick {{ tick_num }}/{{ clock_count }} on {{ inventory_hostname }} — {{ tick_now.stdout }}"
+
+- name: "Wait {{ clock_interval }}s before the next tick"
+  ansible.builtin.command: "sleep {{ clock_interval | int }}"
+  changed_when: false

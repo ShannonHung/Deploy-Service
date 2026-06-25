@@ -69,6 +69,14 @@ class NodeBastionResolution(BaseModel):
     matched_pattern: str
 
 
+class ClusterBastionResolution(BaseModel):
+    cluster_name: str
+    has_slash: bool
+    bastion_type: str
+    matched_mapping: BastionMapping
+    matched_pattern: str
+
+
 # ── Abstract interfaces ───────────────────────────────────────────────────────
 
 class InventoryRepository(ABC):

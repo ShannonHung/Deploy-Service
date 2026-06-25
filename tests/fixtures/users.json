@@ -5,7 +5,8 @@
         "scopes": [
             "deploy_api",
             "vm_api",
-            "command_api"
+            "command_api",
+            "admin_api"
         ]
     },
     {
@@ -13,6 +14,13 @@
         "hashed_password": "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW",
         "scopes": [
             "deploy_api"
+        ]
+    },
+    {
+        "account": "test_command",
+        "hashed_password": "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW",
+        "scopes": [
+            "command_api"
         ]
     }
 ]

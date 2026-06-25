@@ -1,5 +1,46 @@
 import pytest
 from app.services.command_service import CommandService, CommandExecutionException
+from app.domain.command import CommandState, CommandStatus
+
+
+def _make_state() -> CommandState:
+    return CommandState(
+        command_id="cmd-1",
+        status=CommandStatus.RUNNING,
+        host="localhost",
+        resolved_ip="127.0.0.1",
+        port=22,
+        username="admin",
+        ssh_config="default",
+        request_id="req-1",
+        exec_command="run-ansible.sh --playbook fail.yml",
+        killable=True,
+    )
+
+
+def test_mark_failed_stores_exit_code_and_output():
+    """A failed command must retain the exit code and output, mirroring
+    mark_success, so the poll endpoint can surface WHY it failed (e.g. a
+    non-zero ansible exit) instead of returning null/null."""
+    state = _make_state()
+    state.mark_failed("non-zero exit", exit_code=2, output="PLAY RECAP ... failed=1")
+
+    assert state.status == CommandStatus.FAILED
+    assert state.message == "non-zero exit"
+    assert state.exit_code == 2
+    assert state.output == "PLAY RECAP ... failed=1"
+
+
+def test_mark_failed_exit_code_and_output_optional():
+    """exit_code/output are optional — failures without a process result
+    (e.g. capacity rejection, SSH error) still work."""
+    state = _make_state()
+    state.mark_failed("ssh connect failed")
+
+    assert state.status == CommandStatus.FAILED
+    assert state.message == "ssh connect failed"
+    assert state.exit_code is None
+    assert state.output is None
 
 def test_anti_injection_pass():
     svc = CommandService(None)  # repo not used for this method

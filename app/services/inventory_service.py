@@ -6,8 +6,10 @@ import re
 from typing import Dict, Optional
 
 from app.core.exceptions import CommandExecutionException, NotFoundException
+from app.repositories.host_resolver import cluster_type_from_name
 from app.repositories.inventory_repository import (
     BastionMapping,
+    ClusterBastionResolution,
     InventoryRepository,
     NodeBastionResolution,
 )
@@ -20,9 +22,11 @@ class InventoryService:
         self,
         repo: InventoryRepository,
         node_type_map: Dict[str, str],
+        slash_map: Optional[Dict[str, str]] = None,
     ) -> None:
         self._repo = repo
         self._node_type_map = node_type_map
+        self._slash_map = slash_map or {}
 
     async def resolve_node_bastion(
         self,
@@ -80,4 +84,36 @@ class InventoryService:
                 "cluster_name": cluster_name,
                 "bastion_type": bastion_type,
             },
+        )
+
+    async def resolve_cluster_bastion(
+        self, cluster_name: str
+    ) -> ClusterBastionResolution:
+        bastion_type, has_slash = cluster_type_from_name(cluster_name, self._slash_map)
+        mappings = await self._repo.list_mappings(bastion_type)
+
+        for mapping in mappings:
+            for pattern in mapping.patterns:
+                try:
+                    matched = re.fullmatch(pattern, cluster_name)
+                except re.error:
+                    _logger.warning(
+                        "Skipping invalid regex pattern %r in bastion mapping "
+                        "(type=%s) — fix the mapping API data",
+                        pattern, bastion_type,
+                    )
+                    continue
+                if matched:
+                    return ClusterBastionResolution(
+                        cluster_name=cluster_name,
+                        has_slash=has_slash,
+                        bastion_type=bastion_type,
+                        matched_mapping=mapping,
+                        matched_pattern=pattern,
+                    )
+
+        raise NotFoundException(
+            f"No bastion mapping matched cluster '{cluster_name}' "
+            f"for type '{bastion_type}'.",
+            detail={"cluster_name": cluster_name, "bastion_type": bastion_type},
         )

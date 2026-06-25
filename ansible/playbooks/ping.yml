@@ -1,0 +1,15 @@
+---
+# Smoke-test playbook: confirms ansible can reach and authenticate to every
+# host in the `nodes` group. `ping` is ansible's module ping (not ICMP) — it
+# SSHes in and runs a trivial python module, so a PONG proves the full path:
+# inventory -> SSH (CA key) -> remote python.
+- name: Ping all nodes
+  hosts: nodes
+  gather_facts: false
+  tasks:
+    - name: Ping
+      ansible.builtin.ping:
+
+    - name: Show which host answered
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}:{{ ansible_port }}) responded"

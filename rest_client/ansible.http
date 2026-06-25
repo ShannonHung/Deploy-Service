@@ -1,0 +1,181 @@
+###############################################################################
+# Ansible via the SSH execution API.
+#
+# Flow: deploy-service --SSH--> control_node --run-ansible.sh--> docker run
+#       ansible image --SSH--> node1/node2.
+#
+# Prerequisites:
+#   1. Nodes + control_node up:
+#        docker compose -f docker-compose-nodes.yml up -d --build
+#   2. Ansible image built locally (the whitelist uses --no-pull):
+#        cd ansible && make build
+#   3. deploy-service running: make dev   (port 8001)
+#
+# The `host` here is the control_node (we SSH INTO it). ssh_config=control_node
+# selects data/SSH-control_node.json (port 2224). The script then SSHes onward
+# to node1/node2 itself.
+#
+# Playbooks baked into the image (ansible/playbooks/, COPY'd in at build time):
+#   * ping.yml — pings every host; the happy path.
+#   * fail.yml — pings (ok) then runs /bin/false so the play fails. Used by the
+#     run_ansible_fail request below to verify a non-zero exit_status surfaces.
+###############################################################################
+
+@base_url = http://localhost:8001
+@admin_user = admin
+@admin_pass = password
+
+### Get Token
+# @name login
+POST {{base_url}}/token
+Content-Type: application/x-www-form-urlencoded
+
+username={{admin_user}}&password={{admin_pass}}
+
+### Store the access token
+@token = {{login.response.body.access_token}}
+
+### Inspect the generic run_ansible command in the whitelist
+GET {{base_url}}/api/v1/command/run_ansible/info
+Authorization: Bearer {{token}}
+
+### Run ping against ALL hosts in taipei/multinode.ini (limit omitted)
+# @name my_command
+POST {{base_url}}/api/v1/command/execution
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "command_name": "run_ansible",
+    "host": "localhost",
+    "port": 2224,
+    "username": "root",
+    "ssh_config": "control_node",
+    "option": {
+        "timeout_seconds": 300
+    },
+    "arguments": {
+        "playbook": "ping.yml",
+        "inventory": "taipei/multinode.ini"
+    }
+}
+
+### Run ping LIMITED to node1
+# @name my_command
+POST {{base_url}}/api/v1/command/execution
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "command_name": "run_ansible",
+    "host": "localhost",
+    "port": 2224,
+    "username": "root",
+    "ssh_config": "control_node",
+    "option": {
+        "timeout_seconds": 300
+    },
+    "arguments": {
+        "playbook": "ping.yml",
+        "inventory": "taipei/multinode.ini",
+        "limit": "node1"
+    }
+}
+
+### Run ping against the bare-metal inventory, limited to node2
+# @name my_command
+POST {{base_url}}/api/v1/command/execution
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "command_name": "run_ansible",
+    "host": "localhost",
+    "port": 2224,
+    "username": "root",
+    "ssh_config": "control_node",
+    "option": {
+        "timeout_seconds": 300
+    },
+    "arguments": {
+        "playbook": "ping.yml",
+        "inventory": "taipei/bm_multinode.ini",
+        "limit": "node2"
+    }
+}
+
+
+### Run long execution ansible
+# @name my_command
+POST {{base_url}}/api/v1/command/execution
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "command_name": "run_ansible_clock",
+  "host": "localhost",
+  "port": 2224,
+  "username": "root",
+  "ssh_config": "control_node",
+  "option": { "timeout_seconds": 300 },
+  "arguments": {
+    "inventory": "taipei/multinode.ini",
+    "clock_count": 30,
+    "clock_interval": 2
+  }
+}
+
+### Run the deliberately-FAILING playbook (ping ok, then /bin/false)
+# Use this to confirm a non-zero ansible exit propagates back as status=failed.
+# run-ansible.sh exits 2; the play recap shows failed=1 on every host.
+# @name my_command
+POST {{base_url}}/api/v1/command/execution
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "command_name": "run_ansible",
+    "host": "localhost",
+    "port": 2224,
+    "username": "root",
+    "ssh_config": "control_node",
+    "option": {
+        "timeout_seconds": 300
+    },
+    "arguments": {
+        "playbook": "fail.yml",
+        "inventory": "taipei/multinode.ini"
+    }
+}
+
+### Poll execution status (ansible output lands here when it finishes)
+@my_command_id = {{my_command.response.body.data.command_id}}
+
+GET {{base_url}}/api/v1/command/execution/{{my_command_id}}
+Authorization: Bearer {{token}}
+
+### Kill the run (ansible is killable; this SIGTERMs the run-ansible.sh pgroup)
+@my_command_id = {{my_command.response.body.data.command_id}}
+
+POST {{base_url}}/api/v1/command/execution/{{my_command_id}}/kill
+Authorization: Bearer {{token}}
+
+### Force-kill a NON-killable run (human override).
+# A killable:false command is refused by a plain kill (409 "not killable;
+# retry with ?force=true"). timeout/shutdown always respect killable; only an
+# explicit ?force=true overrides it.
+@my_command_id = {{my_command.response.body.data.command_id}}
+
+POST {{base_url}}/api/v1/command/execution/{{my_command_id}}/kill?force=true
+Authorization: Bearer {{token}}
+
+### Poll the formatted log trace (incremental; bump byte_offset/line_num across polls)
+@my_command_id = {{my_command.response.body.data.command_id}}
+
+GET {{base_url}}/api/v1/command/execution/{{my_command_id}}/trace/ui?byte_offset=0&line_num=1
+Authorization: Bearer {{token}}
+
+### Open the live log viewer in a browser (no auth on the HTML shell)
+# Paste the command_id and open in a browser:
+#   {{base_url}}/api/v1/command/execution/<command_id>/view
+GET {{base_url}}/api/v1/command/execution/{{my_command_id}}/view

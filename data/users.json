@@ -5,7 +5,8 @@
         "scopes": [
             "deploy_api",
             "vm_api",
-            "command_api"
+            "command_api",
+            "admin_api"
         ]
     },
     {
@@ -13,6 +14,14 @@
         "hashed_password": "$2b$12$c7.QAfMgoAEbN8ChrGKzZuwx66R8Q7I2W3AyECT23MJoaPo3uWM3C",
         "scopes": [
             "deploy_api"
+        ]
+    },
+    {
+        "account": "cluster_proxy",
+        "hashed_password": "$2b$12$dt1.mtroLYki1gxO0cE/gO5GNNdVetPpiXPm.8zEzFivRW.OftPZm",
+        "scopes": [
+            "deploy_api",
+            "command_api"
         ]
     }
 ]

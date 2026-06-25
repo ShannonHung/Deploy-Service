@@ -6,6 +6,7 @@ import pytest
 from app.core.exceptions import CommandExecutionException, NotFoundException
 from app.repositories.inventory_repository import (
     BastionMapping,
+    ClusterBastionResolution,
     ClusterNodeInfo,
     ClusterRef,
     NodeBastionResolution,
@@ -191,3 +192,42 @@ async def test_resolve_invalid_regex_pattern_is_skipped(caplog):
     assert result.matched_pattern == ".*"
     assert any("invalid" in record.message.lower() or "regex" in record.message.lower()
                for record in caplog.records)
+
+
+# ── Cluster bastion resolution ─────────────────────────────────────────────────
+
+_SLASH = {"no_slash": "type1", "with_slash": "type2"}
+
+
+def _svc():
+    repo = InMemoryInventoryRepository(
+        mappings={
+            "type1": [BastionMapping(patterns=["taiwan-.*"], runner="r1", bastion="b1", bastion_ip="10.1.0.1")],
+            "type2": [BastionMapping(patterns=["taiwan-taipei/.*"], runner="r2", bastion="b2", bastion_ip="10.2.0.2")],
+        }
+    )
+    return InventoryService(repo=repo, node_type_map={}, slash_map=_SLASH)
+
+
+async def test_resolve_cluster_bastion_no_slash():
+    res = await _svc().resolve_cluster_bastion("taiwan-taipei-my-cluster")
+    assert isinstance(res, ClusterBastionResolution)
+    assert res.bastion_type == "type1"
+    assert res.has_slash is False
+    assert res.matched_mapping.bastion_ip == "10.1.0.1"
+
+
+async def test_resolve_cluster_bastion_with_slash():
+    res = await _svc().resolve_cluster_bastion("taiwan-taipei/my-cluster")
+    assert res.bastion_type == "type2"
+    assert res.has_slash is True
+    assert res.matched_mapping.bastion_ip == "10.2.0.2"
+
+
+async def test_resolve_cluster_bastion_no_match():
+    repo = InMemoryInventoryRepository(
+        mappings={"type1": [BastionMapping(patterns=["nope-.*"], runner="r", bastion="b", bastion_ip="9.9.9.9")]}
+    )
+    svc = InventoryService(repo=repo, node_type_map={}, slash_map=_SLASH)
+    with pytest.raises(NotFoundException):
+        await svc.resolve_cluster_bastion("taiwan-taipei-x")
