@@ -120,6 +120,19 @@ class CommandService:
             data = json.load(f)
         return SSHConnectionConfig(**data)
 
+    async def _get_state_or_404(self, command_id: str) -> CommandState:
+        """Load a CommandState from Redis or raise NotFoundException.
+
+        Shared by the poll and trace endpoints — both 404 on an unknown id.
+        """
+        try:
+            return await self.repo.get(command_id)
+        except CommandExecutionException as exc:
+            raise NotFoundException(
+                f"Command {command_id} not found.",
+                detail={"command_id": command_id},
+            ) from exc
+
     async def get_command_execution_result(self, command_id: str) -> CommandExecutionResponse:
         """Poll the current status / result for a previously submitted command from Redis.
 
@@ -133,13 +146,7 @@ class CommandService:
         Raises:
             NotFoundException: If the command_id does not exist in Redis.
         """
-        try:
-            state = await self.repo.get(command_id)
-        except CommandExecutionException as exc:
-            raise NotFoundException(
-                f"Command {command_id} not found.",
-                detail={"command_id": command_id},
-            ) from exc
+        state = await self._get_state_or_404(command_id)
 
         # Heal stuck transient states (RUNNING, or KILLING that never resolved —
         # e.g. a non-killable run flipped to KILLING on shutdown, or the killing
@@ -323,13 +330,7 @@ class CommandService:
         Raises:
             NotFoundException: command_id unknown.
         """
-        try:
-            state = await self.repo.get(command_id)
-        except CommandExecutionException as exc:
-            raise NotFoundException(
-                f"Command {command_id} not found.",
-                detail={"command_id": command_id},
-            ) from exc
+        state = await self._get_state_or_404(command_id)
 
         status = state.status.value if hasattr(state.status, "value") else str(state.status)
 
