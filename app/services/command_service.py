@@ -1030,6 +1030,10 @@ class CommandService:
                 try:
                     is_killable = (await self.repo.get(command_id)).killable
                 except CommandExecutionException:
+                    logger.info(
+                        f"Kill request for unknown command {command_id}; nothing to do.",
+                        extra={"command_id": command_id},
+                    )
                     return
             if not is_killable:
                 logger.warning(
@@ -1062,6 +1066,10 @@ class CommandService:
         try:
             state = await self.repo.get(command_id)
         except CommandExecutionException:
+            logger.info(
+                f"Cross-pod kill for {command_id} aborted; state vanished from Redis.",
+                extra={"command_id": command_id},
+            )
             return
 
         if not state.pgids:
