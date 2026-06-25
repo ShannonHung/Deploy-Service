@@ -39,6 +39,32 @@ settings = get_settings()
 
 _local_running_commands: Dict[str, RunningCommandEntry] = {}
 
+
+def pool_add(command_id: str, entry: RunningCommandEntry) -> None:
+    """Register a locally-running command in the process-wide pool."""
+    _local_running_commands[command_id] = entry
+
+
+def pool_get(command_id: str) -> Optional[RunningCommandEntry]:
+    """Fetch a locally-running command entry, or None if not on this pod."""
+    return _local_running_commands.get(command_id)
+
+
+def pool_remove(command_id: str) -> None:
+    """Drop a command from the local pool (no-op if absent)."""
+    _local_running_commands.pop(command_id, None)
+
+
+def pool_size() -> int:
+    """Number of commands currently running locally (backpressure gate)."""
+    return len(_local_running_commands)
+
+
+def pool_command_ids() -> List[str]:
+    """Snapshot of locally-running command ids (for graceful shutdown)."""
+    return list(_local_running_commands.keys())
+
+
 _execution_semaphore: Optional[asyncio.Semaphore] = None
 
 def _get_semaphore() -> asyncio.Semaphore:
@@ -788,7 +814,7 @@ class CommandService:
             The final ``asyncssh.SSHClientProcess`` whose output should be
             collected by ``_collect_output``.
         """
-        entry = _local_running_commands.get(command_id)
+        entry = pool_get(command_id)
         if not entry:
             return 1, ""
 
@@ -891,7 +917,7 @@ class CommandService:
             killable=context.cmd_config.killable,
             conn=context.conn,
         )
-        _local_running_commands[command_id] = entry
+        pool_add(command_id, entry)
 
         opt = context.raw_request.option
         timeout_seconds = (
@@ -976,14 +1002,14 @@ class CommandService:
                 ))
             finally:
                 context.conn.close()
-                _local_running_commands.pop(command_id, None)
+                pool_remove(command_id)
 
         entry.task = loop.create_task(_timeout_wrapper())
         return CommandExecutionResponse(status=CommandStatus.RUNNING.value, command_id=command_id)
 
     def _check_capacity(self, username: str, request_id: str) -> None:
         """Raise ServiceUnavailableException if the running pool is full."""
-        if len(_local_running_commands) >= settings.COMMAND_MAX_RUNNING:
+        if pool_size() >= settings.COMMAND_MAX_RUNNING:
             logger.warning(
                 f"Max running commands reached ({settings.COMMAND_MAX_RUNNING}), rejecting new request.",
                 extra={"request_id": request_id, "username": username},
@@ -1057,7 +1083,7 @@ class CommandService:
         # reach KILLED). We leave it RUNNING so the marker heal can later resolve
         # its true outcome.
         if not force:
-            entry = _local_running_commands.get(command_id)
+            entry = pool_get(command_id)
             if entry is not None:
                 is_killable = entry.killable
             else:
@@ -1086,7 +1112,7 @@ class CommandService:
 
         # 2. Perform SSH Kill Logic
         # Try Local Kill First
-        entry = _local_running_commands.get(command_id)
+        entry = pool_get(command_id)
         if entry:
             await self._do_kill_via_connection(entry.conn, entry.pgids, command_id)
             await self.repo.update(command_id, lambda s: s.mark_killed(message), ttl)
@@ -1158,7 +1184,7 @@ class CommandService:
         Called by the FastAPI lifespan handler to ensure no orphan processes
         remain on remote hosts after the API server stops.
         """
-        logger.info(f"Shutting down {len(_local_running_commands)} running commands gracefully.")
-        tasks = [self.kill_command(cmd_id) for cmd_id in list(_local_running_commands.keys())]
+        logger.info(f"Shutting down {pool_size()} running commands gracefully.")
+        tasks = [self.kill_command(cmd_id) for cmd_id in pool_command_ids()]
         if tasks:
             await asyncio.gather(*tasks)

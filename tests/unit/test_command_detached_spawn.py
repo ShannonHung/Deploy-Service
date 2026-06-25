@@ -106,9 +106,9 @@ async def test_logged_startup_failure_raises_when_no_ready(monkeypatch):
     # a failure, not hang the run in RUNNING.
     cmd_id = "blind-spot"
     ctx = _logged_ctx(cmd_id)
-    cs._local_running_commands[cmd_id] = RunningCommandEntry(
+    cs.pool_add(cmd_id, RunningCommandEntry(
         host_ip="1.2.3.4", killable=True, conn=ctx.conn,
-    )
+    ))
     # stderr yields a PGID then EOF — never READY.
     proc = _fake_process(["906\n", ""])
     ctx.conn.create_process = AsyncMock(return_value=proc)
@@ -118,7 +118,7 @@ async def test_logged_startup_failure_raises_when_no_ready(monkeypatch):
         with __import__("pytest").raises(Exception):
             await svc._execute_pipeline(ctx, cmd_id, "preview")
     finally:
-        cs._local_running_commands.pop(cmd_id, None)
+        cs.pool_remove(cmd_id)
 
 
 async def test_logged_startup_success_captures_pgid(monkeypatch):
@@ -126,7 +126,7 @@ async def test_logged_startup_success_captures_pgid(monkeypatch):
     cmd_id = "ok-start"
     ctx = _logged_ctx(cmd_id)
     entry = RunningCommandEntry(host_ip="1.2.3.4", killable=True, conn=ctx.conn)
-    cs._local_running_commands[cmd_id] = entry
+    cs.pool_add(cmd_id, entry)
     proc = _fake_process(["906\n", "READY\n"])
     ctx.conn.create_process = AsyncMock(return_value=proc)
 
@@ -134,6 +134,6 @@ async def test_logged_startup_success_captures_pgid(monkeypatch):
     try:
         final = await svc._execute_pipeline(ctx, cmd_id, "preview")
     finally:
-        cs._local_running_commands.pop(cmd_id, None)
+        cs.pool_remove(cmd_id)
     assert final is proc
     assert entry.pgids == [906]

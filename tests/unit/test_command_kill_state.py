@@ -53,13 +53,13 @@ async def test_kill_non_killable_local_does_not_strand_in_killing():
     state = _state(killable=False)
     svc = CommandService(repo=_Repo(state), inventory_repo=None)
     # Present in the local running pool but flagged non-killable.
-    cs._local_running_commands["c1"] = RunningCommandEntry(
+    cs.pool_add("c1", RunningCommandEntry(
         host_ip="1.2.3.4", killable=False,
-    )
+    ))
     try:
         await svc.kill_command("c1")
     finally:
-        cs._local_running_commands.pop("c1", None)
+        cs.pool_remove("c1")
     # Must NOT be left in KILLING. Either untouched (RUNNING) so the marker can
     # later heal it, or already terminal — but never the transient KILLING.
     assert state.status != CommandStatus.KILLING
@@ -79,11 +79,11 @@ async def test_kill_killable_still_reaches_killed(monkeypatch):
     svc = CommandService(repo=_Repo(state), inventory_repo=None)
     entry = RunningCommandEntry(host_ip="1.2.3.4", killable=True, pgids=[906])
     monkeypatch.setattr(svc, "_do_kill_via_connection", AsyncMock())
-    cs._local_running_commands["c1"] = entry
+    cs.pool_add("c1", entry)
     try:
         await svc.kill_command("c1")
     finally:
-        cs._local_running_commands.pop("c1", None)
+        cs.pool_remove("c1")
     assert state.status == CommandStatus.KILLED
 
 
@@ -96,11 +96,11 @@ async def test_force_kill_overrides_non_killable(monkeypatch):
     entry = RunningCommandEntry(host_ip="1.2.3.4", killable=False, pgids=[906])
     killed = AsyncMock()
     monkeypatch.setattr(svc, "_do_kill_via_connection", killed)
-    cs._local_running_commands["c1"] = entry
+    cs.pool_add("c1", entry)
     try:
         await svc.kill_command("c1", force=True)
     finally:
-        cs._local_running_commands.pop("c1", None)
+        cs.pool_remove("c1")
     killed.assert_awaited_once()
     assert state.status == CommandStatus.KILLED
 

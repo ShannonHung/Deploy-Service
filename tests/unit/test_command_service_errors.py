@@ -142,6 +142,9 @@ def test_capacity_full_raises_service_unavailable(svc, monkeypatch):
     service, _ = svc
     # Fill the running-commands pool to the configured limit.
     monkeypatch.setattr(cs_mod.settings, "COMMAND_MAX_RUNNING", 1)
-    monkeypatch.setattr(cs_mod, "_local_running_commands", {"x": object()})
-    with pytest.raises(ServiceUnavailableException):
-        service._check_capacity("test_admin", "rid")
+    cs_mod.pool_add("x", object())
+    try:
+        with pytest.raises(ServiceUnavailableException):
+            service._check_capacity("test_admin", "rid")
+    finally:
+        cs_mod.pool_remove("x")
