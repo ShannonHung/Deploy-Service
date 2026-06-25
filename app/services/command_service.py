@@ -15,6 +15,7 @@ from app.domain.command import (
     SSHConnectionConfig, RunningCommandEntry, ExecutionContext,
     CommandState, CommandStatus, HostType,
     CommandLogLine, CommandTraceResponse,
+    CommandArgumentConfig,
 )
 from app.core.log_renderer import LogRenderer
 from app.core.config import get_settings
@@ -514,7 +515,7 @@ class CommandService:
         """Control_node path where run-ansible.sh tees this run's log."""
         return f"{settings.COMMAND_LOG_DIR}/{command_id}.log"
 
-    def _resolve_command_part(self, part: str, arguments: Dict[str, Any], arg_defs: list, run_id: Optional[str] = None) -> str:
+    def _resolve_command_part(self, part: str, arguments: Dict[str, Any], arg_defs: List[CommandArgumentConfig], run_id: Optional[str] = None) -> str:
         """Replace {placeholder} tokens in a single command part.
 
         User-argument placeholders come from ``arguments``/``arg_defs``.
@@ -529,7 +530,7 @@ class CommandService:
             part = part.replace("{run_id}", run_id)
         return part
 
-    def _strip_omitted_optionals(self, command: List[str], arguments: Dict[str, Any], arg_defs: list) -> List[str]:
+    def _strip_omitted_optionals(self, command: List[str], arguments: Dict[str, Any], arg_defs: List[CommandArgumentConfig]) -> List[str]:
         """Remove pipeline tokens for optional args that weren't supplied.
 
         For each optional (``required=False``) arg the request omitted, drop the
@@ -926,39 +927,34 @@ class CommandService:
         )
 
         async def _execution_task():
-            try:
-                # 1. Execute Pipeline
-                final_process = await self._execute_pipeline(context, command_id, cmd_str_preview)
-                
-                # Update PGIDs in Repository
-                if entry.pgids:
-                    await self.repo.update(
-                        command_id, 
-                        lambda s: setattr(s, "pgids", entry.pgids), 
-                        timeout_seconds + 30
-                    )
+            # 1. Execute Pipeline
+            final_process = await self._execute_pipeline(context, command_id, cmd_str_preview)
 
-                # 2. Collect Output
-                returncode, output = await self._collect_output(final_process)
-                
-                logger.info(
-                    f"Command '{context.command_name}' finished. Exit Status: {returncode}",
-                    extra={"request_id": context.request_id, "username": context.username, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port}
+            # Update PGIDs in Repository
+            if entry.pgids:
+                await self.repo.update(
+                    command_id,
+                    lambda s: setattr(s, "pgids", entry.pgids),
+                    timeout_seconds + 30
                 )
-                
-                success = returncode == 0
-                stored_output = self._apply_output_policy(
-                    context.cmd_config.logged, success, output,
-                )
-                if success:
-                    res = CommandExecutionResponse.success(command_id=command_id, exit_status=returncode, output=stored_output or "")
-                else:
-                    res = CommandExecutionResponse.failed(message="", exit_status=returncode, output=stored_output, command_id=command_id)
-                await self._store_result(command_id, res)
 
-            except Exception as e:
-                # Abort safely inside task wrapper
-                raise e
+            # 2. Collect Output
+            returncode, output = await self._collect_output(final_process)
+
+            logger.info(
+                f"Command '{context.command_name}' finished. Exit Status: {returncode}",
+                extra={"request_id": context.request_id, "username": context.username, "command_id": command_id, "host": context.raw_request.host, "port": context.raw_request.port}
+            )
+
+            success = returncode == 0
+            stored_output = self._apply_output_policy(
+                context.cmd_config.logged, success, output,
+            )
+            if success:
+                res = CommandExecutionResponse.success(command_id=command_id, exit_status=returncode, output=stored_output or "")
+            else:
+                res = CommandExecutionResponse.failed(message="", exit_status=returncode, output=stored_output, command_id=command_id)
+            await self._store_result(command_id, res)
 
         async def _timeout_wrapper():
             try:
