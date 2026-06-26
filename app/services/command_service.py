@@ -20,6 +20,9 @@ from app.core.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+# `logger` and `settings` are retained for test fixtures that patch
+# `command_service.settings` to redirect config; the thin facade itself no longer
+# reads either (execution logic moved to command_executor / command_pool).
 settings = get_settings()
 
 from app.services.command_pool import (  # noqa: F401  (re-exported for callers/tests)

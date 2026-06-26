@@ -6,7 +6,7 @@ import uuid
 import os
 import shlex
 import asyncssh
-from typing import Dict, Any, List, Optional
+from typing import Any, List, Optional
 
 from app.domain.command import (
     CommandExecutionRequest, CommandExecutionResponse,
@@ -18,7 +18,7 @@ from app.core.config import get_settings
 from app.repositories.ssh_auth_repository import create_authenticator
 from app.repositories.command_state_repository import CommandStateRepository
 from app.repositories.inventory_repository import InventoryRepository
-from app.repositories.host_resolver import ResolvedHost, create_host_resolver
+from app.repositories.host_resolver import create_host_resolver
 from app.services.pipeline_builder import PipelineBuilder
 from app.services.command_ssh import SshSupport
 from app.services.command_lifecycle import CommandLifecycle

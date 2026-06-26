@@ -41,8 +41,8 @@ def svc(tmp_path, monkeypatch):
     get_settings.cache_clear()
     # Patch the module-level `settings` cached in the command modules so their
     # internal references see the new COMMAND_CONFIG_DIR. Post-Wave-2 the
-    # execution logic lives in command_executor and the pool gate in
-    # command_pool, so all three modules hold their own `settings` binding.
+    # execution logic (whitelist load, capacity gate) lives in command_executor
+    # and command_pool, so all three modules hold their own `settings` binding.
     new_settings = get_settings()
     monkeypatch.setattr(cs_mod, "settings", new_settings)
     monkeypatch.setattr(ce_mod, "settings", new_settings)
@@ -120,9 +120,9 @@ async def test_missing_argument_raises_command_execution_exception(svc):
 
 def test_timeout_seconds_zero_is_not_replaced_by_default(monkeypatch):
     """timeout_seconds=0 must be used as-is, not silently replaced by the default."""
-    import app.services.command_service as cs_mod
+    import app.services.command_executor as ce_mod
 
-    default_timeout = cs_mod.settings.COMMAND_DEFAULT_TIMEOUT
+    default_timeout = ce_mod.settings.COMMAND_DEFAULT_TIMEOUT
 
     class _Opt:
         timeout_seconds = 0
@@ -135,7 +135,7 @@ def test_timeout_seconds_zero_is_not_replaced_by_default(monkeypatch):
 
     ctx = _Ctx()
     opt = ctx.raw_request.option
-    # Reproduce the exact expression from command_service._run_command line 534.
+    # Reproduce the exact expression from command_executor._handle_async_execution.
     # With the truthiness bug: `0` is falsy → default is used.
     # After fix: `is not None` → 0 is used.
     actual = opt.timeout_seconds if opt.timeout_seconds is not None else default_timeout
@@ -148,7 +148,7 @@ def test_timeout_seconds_zero_is_not_replaced_by_default(monkeypatch):
 def test_capacity_full_raises_service_unavailable(svc, monkeypatch):
     service, _ = svc
     # Fill the running-commands pool to the configured limit.
-    monkeypatch.setattr(cs_mod.settings, "COMMAND_MAX_RUNNING", 1)
+    monkeypatch.setattr(ce_mod.settings, "COMMAND_MAX_RUNNING", 1)
     cs_mod.pool_add("x", object())
     try:
         with pytest.raises(ServiceUnavailableException):
