@@ -23,7 +23,7 @@ def _svc():
 
 def test_non_logged_wrapper_streams_output_over_channel():
     # run_log_path=None → legacy behaviour: no redirect, output goes to the PIPE.
-    wrapper = _svc()._build_step_wrapper(run_log_path=None)
+    wrapper = _svc()._executor._build_step_wrapper(run_log_path=None)
     joined = " ".join(wrapper)
     assert "setsid" in joined
     assert "echo $$ >&2" in joined          # PGID handshake kept
@@ -36,7 +36,7 @@ def test_non_logged_wrapper_streams_output_over_channel():
 
 def test_logged_wrapper_severs_channel_and_detaches():
     log = "/var/log/ansible-runs/abc.log"
-    wrapper = _svc()._build_step_wrapper(run_log_path=log)
+    wrapper = _svc()._executor._build_step_wrapper(run_log_path=log)
     # The wrapper is [..., "sh", "-c", <script>, "_"]; inspect the sh script.
     script = wrapper[wrapper.index("-c") + 1]
     assert "echo $$ >&2" in script          # PGID handshake still first
@@ -106,9 +106,9 @@ async def test_logged_startup_failure_raises_when_no_ready(monkeypatch):
     # a failure, not hang the run in RUNNING.
     cmd_id = "blind-spot"
     ctx = _logged_ctx(cmd_id)
-    cs._local_running_commands[cmd_id] = RunningCommandEntry(
+    cs.pool_add(cmd_id, RunningCommandEntry(
         host_ip="1.2.3.4", killable=True, conn=ctx.conn,
-    )
+    ))
     # stderr yields a PGID then EOF — never READY.
     proc = _fake_process(["906\n", ""])
     ctx.conn.create_process = AsyncMock(return_value=proc)
@@ -116,9 +116,9 @@ async def test_logged_startup_failure_raises_when_no_ready(monkeypatch):
     svc = CommandService(repo=MagicMock(), inventory_repo=None)
     try:
         with __import__("pytest").raises(Exception):
-            await svc._execute_pipeline(ctx, cmd_id, "preview")
+            await svc._executor._execute_pipeline(ctx, cmd_id, "preview")
     finally:
-        cs._local_running_commands.pop(cmd_id, None)
+        cs.pool_remove(cmd_id)
 
 
 async def test_logged_startup_success_captures_pgid(monkeypatch):
@@ -126,14 +126,14 @@ async def test_logged_startup_success_captures_pgid(monkeypatch):
     cmd_id = "ok-start"
     ctx = _logged_ctx(cmd_id)
     entry = RunningCommandEntry(host_ip="1.2.3.4", killable=True, conn=ctx.conn)
-    cs._local_running_commands[cmd_id] = entry
+    cs.pool_add(cmd_id, entry)
     proc = _fake_process(["906\n", "READY\n"])
     ctx.conn.create_process = AsyncMock(return_value=proc)
 
     svc = CommandService(repo=MagicMock(), inventory_repo=None)
     try:
-        final = await svc._execute_pipeline(ctx, cmd_id, "preview")
+        final = await svc._executor._execute_pipeline(ctx, cmd_id, "preview")
     finally:
-        cs._local_running_commands.pop(cmd_id, None)
+        cs.pool_remove(cmd_id)
     assert final is proc
     assert entry.pgids == [906]

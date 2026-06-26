@@ -44,7 +44,7 @@ async def test_trace_unknown_command_raises_notfound():
 async def test_trace_happy_path_renders_new_lines(monkeypatch):
     svc = _svc_with_state(_state())
     monkeypatch.setattr(
-        svc, "_read_remote_log",
+        svc._trace, "_read_remote_log",
         AsyncMock(return_value=(18, "line one\nline two\n")),
     )
     resp = await svc.get_command_trace("c1", byte_offset=0, line_num=1)
@@ -59,7 +59,7 @@ async def test_trace_hard_cap_stops_serving_lines(monkeypatch):
     svc = _svc_with_state(_state())
     big = get_settings().COMMAND_LOG_HARD_CAP_BYTES + 1
     monkeypatch.setattr(
-        svc, "_read_remote_log", AsyncMock(return_value=(big, "x\n")),
+        svc._trace, "_read_remote_log", AsyncMock(return_value=(big, "x\n")),
     )
     resp = await svc.get_command_trace("c1", byte_offset=0, line_num=1)
     assert resp.too_large is True
@@ -77,7 +77,7 @@ async def test_trace_hard_cap_reports_where_to_read_the_log(monkeypatch):
     ))
     big = get_settings().COMMAND_LOG_HARD_CAP_BYTES + 1
     monkeypatch.setattr(
-        svc, "_read_remote_log", AsyncMock(return_value=(big, "x\n")),
+        svc._trace, "_read_remote_log", AsyncMock(return_value=(big, "x\n")),
     )
     resp = await svc.get_command_trace("c1", byte_offset=0, line_num=1)
     assert resp.too_large is True
@@ -92,7 +92,7 @@ async def test_trace_normal_response_omits_location_fields(monkeypatch):
     # leave them None to keep the response lean.
     svc = _svc_with_state(_state())
     monkeypatch.setattr(
-        svc, "_read_remote_log",
+        svc._trace, "_read_remote_log",
         AsyncMock(return_value=(18, "line one\nline two\n")),
     )
     resp = await svc.get_command_trace("c1", byte_offset=0, line_num=1)
@@ -129,16 +129,16 @@ async def test_read_remote_log_calls_conn_run_with_single_command_string(monkeyp
     fake_conn.close = MagicMock()
 
     monkeypatch.setattr(
-        "app.services.command_service.create_authenticator",
+        "app.services.command_ssh.create_authenticator",
         lambda cfg: MagicMock(get_connect_kwargs=lambda: {}),
     )
-    monkeypatch.setattr(svc, "_load_ssh_config", lambda target: MagicMock())
+    monkeypatch.setattr(svc._ssh, "_load_ssh_config", lambda target: MagicMock())
     monkeypatch.setattr(
-        "app.services.command_service.asyncssh.connect",
+        "app.services.command_ssh.asyncssh.connect",
         AsyncMock(return_value=fake_conn),
     )
 
-    total, text = await svc._read_remote_log(svc.repo.get.return_value, 0)
+    total, text = await svc._trace._read_remote_log(svc.repo.get.return_value, 0)
 
     # Each call must be ONE command string with no extra positional argv
     # (extra argv is exactly what crashed asyncssh's create_session).
@@ -150,12 +150,54 @@ async def test_read_remote_log_calls_conn_run_with_single_command_string(monkeyp
     assert total == 42
 
 
+async def test_read_remote_log_skips_tail_when_over_hard_cap(monkeypatch):
+    """Over the hard cap the caller discards new_text anyway (too_large bail-out),
+    so _read_remote_log must NOT pull the body back over SSH — stat, then stop.
+    Otherwise a huge log gets transferred once just to be thrown away."""
+    get_settings.cache_clear()
+    svc = _svc_with_state(_state())
+    big = get_settings().COMMAND_LOG_HARD_CAP_BYTES + 1
+
+    cmds = []
+
+    class _FakeResult:
+        def __init__(self, stdout, exit_status=0):
+            self.stdout = stdout
+            self.exit_status = exit_status
+
+    async def fake_run(command, *args, **kwargs):
+        cmds.append(command)
+        if command.startswith("stat"):
+            return _FakeResult(f"{big}\n", 0)
+        return _FakeResult("should-not-be-read\n", 0)
+
+    fake_conn = MagicMock()
+    fake_conn.run = AsyncMock(side_effect=fake_run)
+    fake_conn.close = MagicMock()
+
+    monkeypatch.setattr(
+        "app.services.command_ssh.create_authenticator",
+        lambda cfg: MagicMock(get_connect_kwargs=lambda: {}),
+    )
+    monkeypatch.setattr(svc._ssh, "_load_ssh_config", lambda target: MagicMock())
+    monkeypatch.setattr(
+        "app.services.command_ssh.asyncssh.connect",
+        AsyncMock(return_value=fake_conn),
+    )
+
+    total, text = await svc._trace._read_remote_log(svc.repo.get.return_value, 0)
+
+    assert total == big
+    assert text == ""
+    assert not any(c.startswith("tail") for c in cmds), cmds
+
+
 async def test_trace_soft_cap_sets_warning_but_serves(monkeypatch):
     get_settings.cache_clear()
     svc = _svc_with_state(_state())
     mid = get_settings().COMMAND_LOG_SOFT_CAP_BYTES + 1
     monkeypatch.setattr(
-        svc, "_read_remote_log", AsyncMock(return_value=(mid, "hello\n")),
+        svc._trace, "_read_remote_log", AsyncMock(return_value=(mid, "hello\n")),
     )
     resp = await svc.get_command_trace("c1", byte_offset=0, line_num=1)
     assert resp.size_warning is True

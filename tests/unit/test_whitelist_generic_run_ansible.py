@@ -70,7 +70,7 @@ def _ctx(cmd, args, run_id="rid"):
 
 def test_build_generic_with_limit():
     svc = CommandService(repo=None, inventory_repo=None)
-    flat = svc._build_pipeline(_ctx(_cmd("run_ansible"),
+    flat = svc._executor._pipeline_builder.build(_ctx(_cmd("run_ansible"),
                                     {"playbook": "ping.yml", "inventory": "t/m.ini", "limit": "node1"}))[0]
     assert "ping.yml" in flat
     assert flat[flat.index("--limit") + 1] == "node1"
@@ -79,7 +79,7 @@ def test_build_generic_with_limit():
 
 def test_build_generic_without_limit_drops_flag():
     svc = CommandService(repo=None, inventory_repo=None)
-    flat = svc._build_pipeline(_ctx(_cmd("run_ansible"),
+    flat = svc._executor._pipeline_builder.build(_ctx(_cmd("run_ansible"),
                                     {"playbook": "ping.yml", "inventory": "t/m.ini"}))[0]
     assert "--limit" not in flat
     assert "{" not in " ".join(flat)
@@ -90,7 +90,7 @@ def test_build_generic_without_limit_drops_flag():
 
 def _build_clock(args):
     svc = CommandService(repo=None, inventory_repo=None)
-    return svc._build_pipeline(_ctx(_cmd("run_ansible_clock"), args))[0]
+    return svc._executor._pipeline_builder.build(_ctx(_cmd("run_ansible_clock"), args))[0]
 
 
 def test_clock_both_tunables():

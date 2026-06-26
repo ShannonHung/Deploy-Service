@@ -38,7 +38,7 @@ def test_logged_command_resolves_run_id_placeholder():
         arguments=[],
     )
     ctx = _ctx(cfg, run_id="abc-123")
-    pipeline = _svc()._build_pipeline(ctx)
+    pipeline = _svc()._executor._pipeline_builder.build(ctx)
     flat = pipeline[0]
     assert "{run_id}" not in flat
     assert "abc-123" in flat
@@ -46,7 +46,7 @@ def test_logged_command_resolves_run_id_placeholder():
 
 
 def test_compute_log_path():
-    path = _svc()._compute_log_path("abc-123")
+    path = _svc()._executor._compute_log_path("abc-123")
     assert path == "/var/log/ansible-runs/abc-123.log"
 
 
@@ -76,11 +76,11 @@ async def test_handle_async_persists_run_log_path(monkeypatch):
     svc = CommandService(repo=repo, inventory_repo=None)
 
     # Stop the background task from actually running SSH.
-    monkeypatch.setattr(svc, "_execute_pipeline", AsyncMock(return_value=MagicMock()))
-    monkeypatch.setattr(svc, "_collect_output", AsyncMock(return_value=(0, "ok")))
-    monkeypatch.setattr(svc, "_store_result", AsyncMock())
+    monkeypatch.setattr(svc._executor, "_execute_pipeline", AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr(svc._executor, "_collect_output", AsyncMock(return_value=(0, "ok")))
+    monkeypatch.setattr(svc._executor, "_store_result", AsyncMock())
 
-    resp = await svc._handle_async_execution(ctx, command_id="fixed-id")
+    resp = await svc._executor._handle_async_execution(ctx, command_id="fixed-id")
     assert resp.command_id == "fixed-id"
     assert saved["state"].run_log_path == "/var/log/ansible-runs/fixed-id.log"
 
@@ -106,9 +106,9 @@ async def test_state_username_is_ssh_account_not_login_account(monkeypatch):
     repo.update = AsyncMock()
 
     svc = CommandService(repo=repo, inventory_repo=None)
-    monkeypatch.setattr(svc, "_execute_pipeline", AsyncMock(return_value=MagicMock()))
-    monkeypatch.setattr(svc, "_collect_output", AsyncMock(return_value=(0, "ok")))
-    monkeypatch.setattr(svc, "_store_result", AsyncMock())
+    monkeypatch.setattr(svc._executor, "_execute_pipeline", AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr(svc._executor, "_collect_output", AsyncMock(return_value=(0, "ok")))
+    monkeypatch.setattr(svc._executor, "_store_result", AsyncMock())
 
-    await svc._handle_async_execution(ctx, command_id="fixed-id")
+    await svc._executor._handle_async_execution(ctx, command_id="fixed-id")
     assert saved["state"].username == "root"

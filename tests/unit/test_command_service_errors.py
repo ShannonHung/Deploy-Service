@@ -12,6 +12,8 @@ from app.core.exceptions import (
 from app.domain.command import CommandExecutionRequest
 from app.services.command_service import CommandService
 import app.services.command_service as cs_mod
+import app.services.command_executor as ce_mod
+import app.services.command_pool as cp_mod
 from app.repositories.inventory_repository import (
     ClusterNodeInfo, ClusterRef, NodeInfo,
 )
@@ -37,9 +39,14 @@ def svc(tmp_path, monkeypatch):
     get_settings.cache_clear()
     monkeypatch.setenv("COMMAND_CONFIG_DIR", str(tmp_path))
     get_settings.cache_clear()
-    # Patch the module-level `settings` cached in command_service so its
-    # internal references see the new COMMAND_CONFIG_DIR.
-    monkeypatch.setattr(cs_mod, "settings", get_settings())
+    # Patch the module-level `settings` cached in the command modules so their
+    # internal references see the new COMMAND_CONFIG_DIR. Post-Wave-2 the
+    # execution logic (whitelist load, capacity gate) lives in command_executor
+    # and command_pool, so all three modules hold their own `settings` binding.
+    new_settings = get_settings()
+    monkeypatch.setattr(cs_mod, "settings", new_settings)
+    monkeypatch.setattr(ce_mod, "settings", new_settings)
+    monkeypatch.setattr(cp_mod, "settings", new_settings)
 
     inventory_repo = InMemoryInventoryRepository(nodes={
         "node-a01": ClusterNodeInfo(
@@ -57,7 +64,7 @@ async def test_no_whitelist_file_raises_forbidden(svc):
         command_name="ls", host="10.0.0.1", username="root",
     )
     with pytest.raises(ForbiddenException):
-        await service._prepare_execution("test_admin", "rid", req)
+        await service._executor._prepare_execution("test_admin", "rid", req)
 
 
 async def test_deny_host_raises_forbidden(svc):
@@ -74,7 +81,7 @@ async def test_deny_host_raises_forbidden(svc):
         command_name="ls", host="node-a01", username="root", host_type="hostname",
     )
     with pytest.raises(ForbiddenException):
-        await service._prepare_execution("test_admin", "rid", req)
+        await service._executor._prepare_execution("test_admin", "rid", req)
 
 
 async def test_command_not_in_whitelist_raises_forbidden(svc):
@@ -91,7 +98,7 @@ async def test_command_not_in_whitelist_raises_forbidden(svc):
         command_name="reboot", host="10.0.0.1", username="root",
     )
     with pytest.raises(ForbiddenException):
-        await service._prepare_execution("test_admin", "rid", req)
+        await service._executor._prepare_execution("test_admin", "rid", req)
 
 
 async def test_missing_argument_raises_command_execution_exception(svc):
@@ -108,14 +115,14 @@ async def test_missing_argument_raises_command_execution_exception(svc):
         command_name="sleep", host="10.0.0.1", username="root", arguments={},
     )
     with pytest.raises(CommandExecutionException):
-        await service._prepare_execution("test_admin", "rid", req)
+        await service._executor._prepare_execution("test_admin", "rid", req)
 
 
 def test_timeout_seconds_zero_is_not_replaced_by_default(monkeypatch):
     """timeout_seconds=0 must be used as-is, not silently replaced by the default."""
-    import app.services.command_service as cs_mod
+    import app.services.command_executor as ce_mod
 
-    default_timeout = cs_mod.settings.COMMAND_DEFAULT_TIMEOUT
+    default_timeout = ce_mod.settings.COMMAND_DEFAULT_TIMEOUT
 
     class _Opt:
         timeout_seconds = 0
@@ -128,7 +135,7 @@ def test_timeout_seconds_zero_is_not_replaced_by_default(monkeypatch):
 
     ctx = _Ctx()
     opt = ctx.raw_request.option
-    # Reproduce the exact expression from command_service._run_command line 534.
+    # Reproduce the exact expression from command_executor._handle_async_execution.
     # With the truthiness bug: `0` is falsy → default is used.
     # After fix: `is not None` → 0 is used.
     actual = opt.timeout_seconds if opt.timeout_seconds is not None else default_timeout
@@ -141,7 +148,10 @@ def test_timeout_seconds_zero_is_not_replaced_by_default(monkeypatch):
 def test_capacity_full_raises_service_unavailable(svc, monkeypatch):
     service, _ = svc
     # Fill the running-commands pool to the configured limit.
-    monkeypatch.setattr(cs_mod.settings, "COMMAND_MAX_RUNNING", 1)
-    monkeypatch.setattr(cs_mod, "_local_running_commands", {"x": object()})
-    with pytest.raises(ServiceUnavailableException):
-        service._check_capacity("test_admin", "rid")
+    monkeypatch.setattr(ce_mod.settings, "COMMAND_MAX_RUNNING", 1)
+    cs_mod.pool_add("x", object())
+    try:
+        with pytest.raises(ServiceUnavailableException):
+            service._executor._check_capacity("test_admin", "rid")
+    finally:
+        cs_mod.pool_remove("x")
