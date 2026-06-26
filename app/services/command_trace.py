@@ -40,6 +40,10 @@ class CommandTrace:
             if size_res.exit_status != 0:
                 return 0, ""  # file not created yet
             total_size = int(str(size_res.stdout).strip() or "0")
+            if total_size > settings.COMMAND_LOG_HARD_CAP_BYTES:
+                # Caller bails out with too_large and discards the body anyway,
+                # so don't pull a multi-MB tail back over SSH just to drop it.
+                return total_size, ""
             tail_res = await conn.run(
                 f"tail -c +{byte_offset + 1} {quoted_path}", check=False,
             )
