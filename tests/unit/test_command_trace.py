@@ -129,12 +129,12 @@ async def test_read_remote_log_calls_conn_run_with_single_command_string(monkeyp
     fake_conn.close = MagicMock()
 
     monkeypatch.setattr(
-        "app.services.command_service.create_authenticator",
+        "app.services.command_ssh.create_authenticator",
         lambda cfg: MagicMock(get_connect_kwargs=lambda: {}),
     )
-    monkeypatch.setattr(svc, "_load_ssh_config", lambda target: MagicMock())
+    monkeypatch.setattr(svc._ssh, "_load_ssh_config", lambda target: MagicMock())
     monkeypatch.setattr(
-        "app.services.command_service.asyncssh.connect",
+        "app.services.command_ssh.asyncssh.connect",
         AsyncMock(return_value=fake_conn),
     )
 

@@ -35,7 +35,7 @@ def _whitelist(cmd):
 def _svc_for_prepare(cmd, monkeypatch):
     svc = CommandService(repo=MagicMock(), inventory_repo=None)
     monkeypatch.setattr(svc, "_load_user_whitelist", lambda u: _whitelist(cmd))
-    monkeypatch.setattr(svc, "_load_ssh_config", lambda t: SSHConnectionConfig(auth_method="key", key_base64="x"))
+    monkeypatch.setattr(svc._ssh, "_load_ssh_config", lambda t: SSHConnectionConfig(auth_method="key", key_base64="x"))
 
     fake_resolver = MagicMock()
     fake_resolver.resolve = AsyncMock(return_value=ResolvedHost(ip="1.2.3.4", source_input="localhost"))

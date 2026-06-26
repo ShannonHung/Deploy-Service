@@ -183,12 +183,12 @@ async def test_read_run_exit_marker_returns_int_when_sidecar_present(monkeypatch
     fake_conn.run = AsyncMock(side_effect=fake_run)
     fake_conn.close = MagicMock()
     monkeypatch.setattr(
-        "app.services.command_service.create_authenticator",
+        "app.services.command_ssh.create_authenticator",
         lambda cfg: MagicMock(get_connect_kwargs=lambda: {}),
     )
-    monkeypatch.setattr(svc, "_load_ssh_config", lambda t: MagicMock())
+    monkeypatch.setattr(svc._ssh, "_load_ssh_config", lambda t: MagicMock())
     monkeypatch.setattr(
-        "app.services.command_service.asyncssh.connect",
+        "app.services.command_ssh.asyncssh.connect",
         AsyncMock(return_value=fake_conn),
     )
 
@@ -213,12 +213,12 @@ async def test_read_run_exit_marker_returns_none_when_absent(monkeypatch):
     fake_conn.run = AsyncMock(return_value=_R("", 1))  # cat: no such file
     fake_conn.close = MagicMock()
     monkeypatch.setattr(
-        "app.services.command_service.create_authenticator",
+        "app.services.command_ssh.create_authenticator",
         lambda cfg: MagicMock(get_connect_kwargs=lambda: {}),
     )
-    monkeypatch.setattr(svc, "_load_ssh_config", lambda t: MagicMock())
+    monkeypatch.setattr(svc._ssh, "_load_ssh_config", lambda t: MagicMock())
     monkeypatch.setattr(
-        "app.services.command_service.asyncssh.connect",
+        "app.services.command_ssh.asyncssh.connect",
         AsyncMock(return_value=fake_conn),
     )
     assert await svc._read_run_exit_marker(state) is None

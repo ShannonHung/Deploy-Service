@@ -25,6 +25,7 @@ from app.repositories.command_state_repository import CommandStateRepository
 from app.repositories.inventory_repository import InventoryRepository
 from app.repositories.host_resolver import ResolvedHost, create_host_resolver
 from app.services.pipeline_builder import PipelineBuilder
+from app.services.command_ssh import SshSupport
 from app.core.exceptions import (
     CommandExecutionException,
     UpstreamTimeoutException,
@@ -62,6 +63,7 @@ class CommandService:
         self.repo = repo
         self.inventory_repo = inventory_repo
         self._pipeline_builder = PipelineBuilder()
+        self._ssh = SshSupport()
 
     def _validate_anti_injection(self, user_input: str):
         """Early-rejection layer: block inputs containing shell meta-characters.
@@ -95,27 +97,6 @@ class CommandService:
         with open(file_path, "r") as f:
             data = json.load(f)
         return UserCommandWhitelist(**data)
-
-    def _load_ssh_config(self, target: str) -> SSHConnectionConfig:
-        """Load SSH connection configuration for the specified target cluster.
-
-        Looks for ``data/SSH-{target}.json`` first; falls back to
-        ``data/SSH-default.json`` if the target-specific file is absent.
-
-        Raises:
-            BaseAppException: If neither file exists (500 — operator misconfig).
-        """
-        file_path = os.path.join(settings.COMMAND_CONFIG_DIR, f"SSH-{target}.json")
-        if not os.path.exists(file_path):
-            file_path = os.path.join(settings.COMMAND_CONFIG_DIR, "SSH-default.json")
-            if not os.path.exists(file_path):
-                raise BaseAppException(
-                    "SSH configuration not found.",
-                    detail={"target": target},
-                )
-        with open(file_path, "r") as f:
-            data = json.load(f)
-        return SSHConnectionConfig(**data)
 
     async def _get_state_or_404(self, command_id: str) -> CommandState:
         """Load a CommandState from Redis or raise NotFoundException.
@@ -163,40 +144,6 @@ class CommandService:
             pgids=state.pgids,
         )
 
-    async def _connect_to_control_node(self, state: CommandState) -> asyncssh.SSHClientConnection:
-        """Open an SSH connection back to the control_node for a stored run.
-
-        Shared by the log viewer (``_read_remote_log``) and orphan-run recovery
-        (``_read_run_exit_marker``): both rebuild the connection purely from the
-        persisted ``CommandState`` (resolved_ip / port / username / ssh_config),
-        which is what makes them work from any pod.
-
-        Raises:
-            UpstreamTimeoutException / UpstreamUnavailableException:
-                SSH connect failure (mirrors ``_connect``).
-        """
-        ssh_config = self._load_ssh_config(state.ssh_config)
-        authenticator = create_authenticator(ssh_config)
-        conn_kwargs = authenticator.get_connect_kwargs()
-        try:
-            return await asyncio.wait_for(
-                asyncssh.connect(
-                    host=state.resolved_ip, port=state.port,
-                    username=state.username, **conn_kwargs,
-                ),
-                timeout=settings.SSH_CONNECT_TIMEOUT_SECONDS,
-            )
-        except asyncio.TimeoutError as exc:
-            raise UpstreamTimeoutException(
-                f"SSH connect to control_node timed out for {state.command_id}.",
-                detail={"command_id": state.command_id},
-            ) from exc
-        except (OSError, asyncssh.Error) as exc:
-            raise UpstreamUnavailableException(
-                f"SSH connect to control_node failed for {state.command_id}: {exc}",
-                detail={"command_id": state.command_id},
-            ) from exc
-
     def _exit_marker_path(self, run_log_path: str) -> str:
         """Sidecar path for a run's exit code: ``<run_id>.log`` → ``<run_id>.exit``."""
         if run_log_path.endswith(".log"):
@@ -217,7 +164,7 @@ class CommandService:
                 fall back to the last-known state).
         """
         marker_path = self._exit_marker_path(state.run_log_path)
-        conn = await self._connect_to_control_node(state)
+        conn = await self._ssh._connect_to_control_node(state)
         try:
             quoted = shlex.quote(marker_path)
             res = await conn.run(f"cat {quoted}", check=False)
@@ -299,7 +246,7 @@ class CommandService:
                 SSH connect failure when reading the log (mirrors ``_connect``).
         """
         path = state.run_log_path
-        conn = await self._connect_to_control_node(state)
+        conn = await self._ssh._connect_to_control_node(state)
         try:
             # asyncssh's conn.run takes ONE command string, not argv. The path
             # is server-generated, but shlex.quote keeps the anti-injection
@@ -495,7 +442,7 @@ class CommandService:
                         detail={"argument": arg_conf.name},
                     )
 
-        ssh_config = self._load_ssh_config(req.ssh_config)
+        ssh_config = self._ssh._load_ssh_config(req.ssh_config)
 
         return ExecutionContext(
             username=username,
@@ -1051,7 +998,7 @@ class CommandService:
             f"(host_type={state.host_type.value}, raw={state.host})"
         )
         
-        ssh_config = self._load_ssh_config(state.ssh_config)
+        ssh_config = self._ssh._load_ssh_config(state.ssh_config)
         authenticator = create_authenticator(ssh_config)
         conn_kwargs = authenticator.get_connect_kwargs()
         
