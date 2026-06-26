@@ -26,6 +26,7 @@ from app.repositories.inventory_repository import InventoryRepository
 from app.repositories.host_resolver import ResolvedHost, create_host_resolver
 from app.services.pipeline_builder import PipelineBuilder
 from app.services.command_ssh import SshSupport
+from app.services.command_state_helpers import StateHelpers
 from app.core.exceptions import (
     CommandExecutionException,
     UpstreamTimeoutException,
@@ -64,6 +65,7 @@ class CommandService:
         self.inventory_repo = inventory_repo
         self._pipeline_builder = PipelineBuilder()
         self._ssh = SshSupport()
+        self._state = StateHelpers(repo=self.repo, ssh=self._ssh)
 
     def _validate_anti_injection(self, user_input: str):
         """Early-rejection layer: block inputs containing shell meta-characters.
@@ -98,19 +100,6 @@ class CommandService:
             data = json.load(f)
         return UserCommandWhitelist(**data)
 
-    async def _get_state_or_404(self, command_id: str) -> CommandState:
-        """Load a CommandState from Redis or raise NotFoundException.
-
-        Shared by the poll and trace endpoints — both 404 on an unknown id.
-        """
-        try:
-            return await self.repo.get(command_id)
-        except CommandExecutionException as exc:
-            raise NotFoundException(
-                f"Command {command_id} not found.",
-                detail={"command_id": command_id},
-            ) from exc
-
     async def get_command_execution_result(self, command_id: str) -> CommandExecutionResponse:
         """Poll the current status / result for a previously submitted command from Redis.
 
@@ -124,13 +113,13 @@ class CommandService:
         Raises:
             NotFoundException: If the command_id does not exist in Redis.
         """
-        state = await self._get_state_or_404(command_id)
+        state = await self._state._get_state_or_404(command_id)
 
         # Heal stuck transient states (RUNNING, or KILLING that never resolved —
         # e.g. a non-killable run flipped to KILLING on shutdown, or the killing
         # pod died) from the control_node marker. Terminal states are left alone.
         if state.status in (CommandStatus.RUNNING, CommandStatus.KILLING) and state.run_log_path:
-            state = await self._heal_from_marker(state)
+            state = await self._state._heal_from_marker(state)
 
         return CommandExecutionResponse(
             status=state.status,
@@ -143,96 +132,6 @@ class CommandService:
             resolved_ip=state.resolved_ip,
             pgids=state.pgids,
         )
-
-    def _exit_marker_path(self, run_log_path: str) -> str:
-        """Sidecar path for a run's exit code: ``<run_id>.log`` → ``<run_id>.exit``."""
-        if run_log_path.endswith(".log"):
-            return run_log_path[: -len(".log")] + ".exit"
-        return run_log_path + ".exit"
-
-    async def _read_run_exit_marker(self, state: CommandState) -> Optional[int]:
-        """SSH to the control_node and read the run's exit-code sidecar.
-
-        Returns the integer exit code if ``run-ansible.sh`` has finished and
-        written ``<run_id>.exit``; ``None`` if the file is absent (run still in
-        flight) or its contents are unparseable. The path is server-generated;
-        ``shlex.quote`` keeps the anti-injection guarantee regardless.
-
-        Raises:
-            UpstreamTimeoutException / UpstreamUnavailableException:
-                SSH connect failure (propagated; the caller decides whether to
-                fall back to the last-known state).
-        """
-        marker_path = self._exit_marker_path(state.run_log_path)
-        conn = await self._ssh._connect_to_control_node(state)
-        try:
-            quoted = shlex.quote(marker_path)
-            res = await conn.run(f"cat {quoted}", check=False)
-            if res.exit_status != 0:
-                return None  # sidecar not written yet → still running
-            raw = str(res.stdout).strip() if res.stdout else ""
-            try:
-                return int(raw)
-            except ValueError:
-                # Half-written or corrupt marker — treat as not-yet-final.
-                logger.warning(
-                    f"Unparseable exit marker for {state.command_id}: {raw!r}",
-                    extra={"command_id": state.command_id},
-                )
-                return None
-        finally:
-            conn.close()
-
-    async def _heal_from_marker(self, state: CommandState) -> CommandState:
-        """Lazily reconcile a stuck transient state from the control_node marker.
-
-        Applies to RUNNING and KILLING. Reads ``<run_id>.exit``; if present,
-        transitions Redis to SUCCESS / FAILED via ``update_if`` gated on
-        ``status in (RUNNING, KILLING)`` — so a concurrent fast-path write or a
-        completed kill (which lands on the terminal KILLED) always wins the race
-        and is never overwritten. Returns the (possibly) refreshed state. SSH
-        failures are swallowed — a transient control_node outage must not turn a
-        poll into a 5xx; the caller keeps reporting the last-known state until
-        the next poll.
-        """
-        try:
-            code = await self._read_run_exit_marker(state)
-        except BaseAppException as exc:
-            logger.info(
-                f"Heal read failed for {state.command_id}; reporting last-known state: {exc}",
-                extra={"command_id": state.command_id},
-            )
-            return state
-        if code is None:
-            return state  # no marker yet — genuinely still running
-
-        success = code == 0
-        # Reuse the existing output policy: on failure, surface a short tail of
-        # the log; on success, nothing (the full log lives in /view).
-        async def updater(s: CommandState):
-            if success:
-                s.mark_success(code, "")
-            else:
-                s.mark_failed(
-                    f"Recovered from control_node marker: exit {code}.",
-                    exit_code=code,
-                )
-
-        healed = await self.repo.update_if(
-            state.command_id,
-            condition=lambda s: s.status in (CommandStatus.RUNNING, CommandStatus.KILLING),
-            updater=updater,
-            ttl_seconds=settings.COMMAND_RESULT_TTL_SECONDS,
-        )
-        if healed:
-            logger.info(
-                f"Healed orphaned run {state.command_id} from marker: exit {code} "
-                f"({'success' if success else 'failed'}).",
-                extra={"command_id": state.command_id},
-            )
-            return await self.repo.get(state.command_id)
-        # Lost the race (fast path / kill already wrote a terminal state).
-        return await self.repo.get(state.command_id)
 
     async def _read_remote_log(self, state: CommandState, byte_offset: int) -> tuple[int, str]:
         """SSH to the control_node and read the run log tail.
@@ -274,7 +173,7 @@ class CommandService:
         Raises:
             NotFoundException: command_id unknown.
         """
-        state = await self._get_state_or_404(command_id)
+        state = await self._state._get_state_or_404(command_id)
 
         status = state.status.value if hasattr(state.status, "value") else str(state.status)
 

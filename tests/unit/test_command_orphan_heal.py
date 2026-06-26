@@ -52,7 +52,7 @@ def _svc(state):
 
 def test_exit_marker_path_derived_from_log_path():
     svc = CommandService(repo=None, inventory_repo=None)
-    assert svc._exit_marker_path("/var/log/ansible-runs/abc.log") == \
+    assert svc._state._exit_marker_path("/var/log/ansible-runs/abc.log") == \
         "/var/log/ansible-runs/abc.exit"
 
 
@@ -61,7 +61,7 @@ def test_exit_marker_path_derived_from_log_path():
 async def test_poll_heals_to_success_when_marker_says_exit_0(monkeypatch):
     state = _state()
     svc = _svc(state)
-    monkeypatch.setattr(svc, "_read_run_exit_marker", AsyncMock(return_value=0))
+    monkeypatch.setattr(svc._state, "_read_run_exit_marker", AsyncMock(return_value=0))
     resp = await svc.get_command_execution_result("c1")
     assert resp.status == CommandStatus.SUCCESS.value
     assert resp.exit_status == 0
@@ -71,7 +71,7 @@ async def test_poll_heals_to_success_when_marker_says_exit_0(monkeypatch):
 async def test_poll_heals_to_failed_when_marker_says_nonzero(monkeypatch):
     state = _state()
     svc = _svc(state)
-    monkeypatch.setattr(svc, "_read_run_exit_marker", AsyncMock(return_value=2))
+    monkeypatch.setattr(svc._state, "_read_run_exit_marker", AsyncMock(return_value=2))
     resp = await svc.get_command_execution_result("c1")
     assert resp.status == CommandStatus.FAILED.value
     assert resp.exit_status == 2
@@ -81,7 +81,7 @@ async def test_poll_heals_to_failed_when_marker_says_nonzero(monkeypatch):
 async def test_poll_stays_running_when_no_marker_yet(monkeypatch):
     state = _state()
     svc = _svc(state)
-    monkeypatch.setattr(svc, "_read_run_exit_marker", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc._state, "_read_run_exit_marker", AsyncMock(return_value=None))
     resp = await svc.get_command_execution_result("c1")
     assert resp.status == CommandStatus.RUNNING.value
     assert state.status == CommandStatus.RUNNING  # untouched
@@ -92,7 +92,7 @@ async def test_poll_does_not_heal_non_logged_commands(monkeypatch):
     state = _state(run_log_path=None)
     svc = _svc(state)
     marker = AsyncMock(return_value=0)
-    monkeypatch.setattr(svc, "_read_run_exit_marker", marker)
+    monkeypatch.setattr(svc._state, "_read_run_exit_marker", marker)
     resp = await svc.get_command_execution_result("c1")
     assert resp.status == CommandStatus.RUNNING.value
     marker.assert_not_awaited()
@@ -104,7 +104,7 @@ async def test_poll_heals_stuck_killing_from_marker(monkeypatch):
     # (EXIT 0). A stuck KILLING is a transient orphan and MUST be healed.
     state = _state(status=CommandStatus.KILLING, message="Killed")
     svc = _svc(state)
-    monkeypatch.setattr(svc, "_read_run_exit_marker", AsyncMock(return_value=0))
+    monkeypatch.setattr(svc._state, "_read_run_exit_marker", AsyncMock(return_value=0))
     resp = await svc.get_command_execution_result("c1")
     assert resp.status == CommandStatus.SUCCESS.value
     assert resp.exit_status == 0
@@ -116,7 +116,7 @@ async def test_poll_killing_stays_killing_without_marker(monkeypatch):
     # leave it as KILLING (don't invent an outcome).
     state = _state(status=CommandStatus.KILLING, message="Killed")
     svc = _svc(state)
-    monkeypatch.setattr(svc, "_read_run_exit_marker", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc._state, "_read_run_exit_marker", AsyncMock(return_value=None))
     resp = await svc.get_command_execution_result("c1")
     assert resp.status == CommandStatus.KILLING.value
     assert state.status == CommandStatus.KILLING
@@ -127,7 +127,7 @@ async def test_poll_does_not_heal_terminal_states(monkeypatch):
     state = _state(status=CommandStatus.SUCCESS, exit_code=0)
     svc = _svc(state)
     marker = AsyncMock(return_value=2)
-    monkeypatch.setattr(svc, "_read_run_exit_marker", marker)
+    monkeypatch.setattr(svc._state, "_read_run_exit_marker", marker)
     resp = await svc.get_command_execution_result("c1")
     assert resp.status == CommandStatus.SUCCESS.value
     marker.assert_not_awaited()
@@ -139,7 +139,7 @@ async def test_poll_does_not_resurrect_killed_run(monkeypatch):
     state = _state(status=CommandStatus.KILLED, message="killed")
     svc = _svc(state)
     marker = AsyncMock(return_value=0)
-    monkeypatch.setattr(svc, "_read_run_exit_marker", marker)
+    monkeypatch.setattr(svc._state, "_read_run_exit_marker", marker)
     resp = await svc.get_command_execution_result("c1")
     assert resp.status == CommandStatus.KILLED.value
     marker.assert_not_awaited()
@@ -151,7 +151,7 @@ async def test_poll_survives_ssh_failure_when_healing(monkeypatch):
     state = _state()
     svc = _svc(state)
     monkeypatch.setattr(
-        svc, "_read_run_exit_marker",
+        svc._state, "_read_run_exit_marker",
         AsyncMock(side_effect=UpstreamUnavailableException("ssh down")),
     )
     resp = await svc.get_command_execution_result("c1")
@@ -192,7 +192,7 @@ async def test_read_run_exit_marker_returns_int_when_sidecar_present(monkeypatch
         AsyncMock(return_value=fake_conn),
     )
 
-    code = await svc._read_run_exit_marker(state)
+    code = await svc._state._read_run_exit_marker(state)
     assert code == 2
     # One command string, no stray argv (the asyncssh create_session trap).
     assert all(extra == () for _c, extra in calls), calls
@@ -221,7 +221,7 @@ async def test_read_run_exit_marker_returns_none_when_absent(monkeypatch):
         "app.services.command_ssh.asyncssh.connect",
         AsyncMock(return_value=fake_conn),
     )
-    assert await svc._read_run_exit_marker(state) is None
+    assert await svc._state._read_run_exit_marker(state) is None
 
 
 async def test_unknown_command_still_raises_notfound():
