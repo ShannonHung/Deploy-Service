@@ -1,0 +1,17 @@
+---
+# Deliberately-failing playbook — used to verify the runner propagates a
+# non-zero exit status all the way back through:
+#   ansible-playbook (exit 2) -> tee (pipefail) -> run-ansible.sh -> SSH -> API.
+#
+# It first pings (so you can see a successful task), then runs a command that
+# returns exit code 1. ansible marks the task failed and the play exits 2.
+- name: Deliberate failure
+  hosts: nodes
+  gather_facts: false
+  tasks:
+    - name: Ping (this succeeds)
+      ansible.builtin.ping:
+
+    - name: Run a command that fails on purpose
+      ansible.builtin.command:
+        cmd: /bin/false

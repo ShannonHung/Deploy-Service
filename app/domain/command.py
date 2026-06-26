@@ -19,6 +19,7 @@ class HostType(str, Enum):
     IP = "ip"
     BASTION = "bastion"
     HOSTNAME = "hostname"
+    CLUSTER = "cluster"
 
 class CommandState(BaseModel):
     command_id: str
@@ -26,6 +27,7 @@ class CommandState(BaseModel):
     output: Optional[str] = None
     exit_code: Optional[int] = None
     message: Optional[str] = None
+    run_log_path: Optional[str] = None  # control_node path of the tee'd run log
 
     # execution metadata
     host: str
@@ -54,9 +56,17 @@ class CommandState(BaseModel):
         self.exit_code = exit_code
         self.output = output
 
-    def mark_failed(self, message: str):
+    def mark_failed(self, message: str, exit_code: Optional[int] = None, output: Optional[str] = None):
         self.status = CommandStatus.FAILED
         self.message = message
+        # Keep exit_code/output when the failure came from a finished process
+        # (e.g. a non-zero ansible exit), so the poll endpoint can show WHY it
+        # failed instead of null/null. They stay None for failures with no
+        # process result (capacity rejection, SSH error, etc.).
+        if exit_code is not None:
+            self.exit_code = exit_code
+        if output is not None:
+            self.output = output
 
     def mark_killing(self, message: str):
         self.status = CommandStatus.KILLING
@@ -73,6 +83,8 @@ class CommandArgumentConfig(BaseModel):
     name: str
     type: str  # e.g., "int", "string"
     validation_regex: str = ""
+    required: bool = True  # when False, the arg may be omitted from the request
+                           # and any pipeline tokens referencing it are dropped.
 
 class PipelineStep(BaseModel):
     command: List[str]
@@ -82,6 +94,7 @@ class CommandWhitelistConfig(BaseModel):
     description: str = ""
     disconnects_ssh: bool = False
     killable: bool = False
+    logged: bool = False  # opt-in: tee output to a per-run file + expose viewer
     pipeline: List[PipelineStep]
     arguments: List[CommandArgumentConfig] = []
 
@@ -138,6 +151,39 @@ class CommandExecutionResponse(BaseModel):
         return cls(status=CommandStatus.SUCCESS.value, command_id=command_id, exit_status=exit_status, output=output)
 
 
+class CommandLogLine(BaseModel):
+    num: int
+    content_html: str
+
+
+class CommandTraceResponse(BaseModel):
+    """Incremental slice of processed command-log lines for the UI.
+
+    Mirrors the deploy FormattedLogResponse but keyed by command_id and
+    carrying the command's lifecycle status.
+    """
+    command_id: str
+    status: str
+    next_byte_offset: int
+    next_line_num: int
+    lines: List[CommandLogLine]
+    total_size: int = 0
+    size_warning: bool = False
+    too_large: bool = False
+    # Where the full log physically lives on the control_node. Populated only on
+    # the `too_large` bail-out so the user can read it directly (ssh + tail);
+    # left None on normal slices to keep the response lean.
+    log_host: Optional[str] = None
+    log_port: Optional[int] = None
+    log_user: Optional[str] = None
+    log_file_path: Optional[str] = None
+
+
+class RunningCommandsResponse(BaseModel):
+    count: int
+    commands: List[CommandState]
+
+
 # ── Runtime Dataclasses ──────────────────────────────────────────────────────
 
 @dataclass
@@ -160,3 +206,5 @@ class ExecutionContext:
     resolved_host: "ResolvedHost"  # forward-ref to avoid circular import
     conn: Optional[asyncssh.SSHClientConnection] = None
     pipeline_cmds: List[List[str]] = field(default_factory=list)
+    run_id: Optional[str] = None
+    run_log_path: Optional[str] = None

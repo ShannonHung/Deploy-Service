@@ -22,3 +22,30 @@ services:
     volumes:
       - ./data/ssh_keys/ca.pub:/etc/ssh/ca.pub:ro
       - ./data/ssh_keys/client_key.pub:/root/.ssh/authorized_keys:ro
+
+  # control_node — ansible jump host. deploy-service SSHes here and runs
+  # ansible/run-ansible.sh, which `docker run`s the ansible image via the
+  # mounted host docker socket (Docker-out-of-Docker).
+  control_node:
+    build:
+      context: .
+      dockerfile: Dockerfile.control_node
+    container_name: ssh_control_node
+    ports:
+      - "2224:22"
+    volumes:
+      - ./data/ssh_keys/ca.pub:/etc/ssh/ca.pub:ro
+      - ./data/ssh_keys/client_key.pub:/root/.ssh/authorized_keys:ro
+      # Talk to the host docker daemon (DooD) so run-ansible.sh can launch the image.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount the deploy-service repo at the SAME absolute host path. Because the
+      # ansible container is launched on the HOST daemon, run-ansible.sh's
+      # `docker run -v <path>` mounts resolve against the host filesystem — so the
+      # in-container path must equal the host path for the script + key to line up.
+      - ${PWD}:${PWD}
+      # Local-test only: also expose the PARENT dir so the sibling
+      # my-ansible-inventory repo is reachable for a file:// clone before it's
+      # pushed to GitLab. Once the inventory is on GitLab this isn't needed (the
+      # script clones over the network). Harmless to keep.
+      - ${PWD}/..:${PWD}/..
+    working_dir: ${PWD}/ansible

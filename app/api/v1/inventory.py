@@ -3,6 +3,7 @@
 GET /api/v1/inventory/nodes/{node_name}  → ClusterNodeInfo
 GET /api/v1/inventory/mappings           → list[BastionMapping]  (?type=<type>)
 GET /api/v1/inventory/nodes/{node_name}/bastion-resolution  → NodeBastionResolution
+GET /api/v1/inventory/cluster/bastion-resolution  → ClusterBastionResolution
 
 All endpoints require command_api scope.
 """
@@ -20,6 +21,7 @@ from app.core.dependencies import (
 from app.domain.models import ApiResponse, User
 from app.repositories.inventory_repository import (
     BastionMapping,
+    ClusterBastionResolution,
     ClusterNodeInfo,
     InventoryRepository,
     NodeBastionResolution,
@@ -76,4 +78,19 @@ async def get_node_bastion_resolution(
     service: InventoryService = Depends(get_inventory_service),
 ) -> ApiResponse[NodeBastionResolution]:
     data = await service.resolve_node_bastion(node_name, bastion_type_override=bastion_type)
+    return ApiResponse(data=data, request_id=_request_id(request))
+
+
+@router.get(
+    "/cluster/bastion-resolution",
+    response_model=ApiResponse[ClusterBastionResolution],
+    summary="Resolve a cluster name to a bastion runner (slash-presence selects type)",
+)
+async def get_cluster_bastion_resolution(
+    request: Request,
+    cluster_name: str = Query(..., description="Cluster name; a '/' selects the with_slash bastion_type"),
+    current_user: Annotated[User, Depends(get_current_user(["command_api"]))] = None,
+    service: InventoryService = Depends(get_inventory_service),
+) -> ApiResponse[ClusterBastionResolution]:
+    data = await service.resolve_cluster_bastion(cluster_name)
     return ApiResponse(data=data, request_id=_request_id(request))

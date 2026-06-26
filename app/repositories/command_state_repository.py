@@ -1,10 +1,13 @@
 import json
 import asyncio
+import logging
 from datetime import timedelta
-from typing import Callable, Coroutine
+from typing import Callable, Coroutine, Optional
 from redis.asyncio import Redis
-from app.domain.command import CommandState
+from app.domain.command import CommandState, CommandStatus
 from app.core.exceptions import CommandExecutionException
+
+_logger = logging.getLogger(__name__)
 
 class CommandStateRepository:
     PREFIX = "command"
@@ -44,9 +47,32 @@ class CommandStateRepository:
         state = await self.get(command_id)
         if not condition(state):
             return False
-            
+
         result = updater(state)
         if asyncio.iscoroutine(result):
             await result
         await self.save(state, ttl_seconds)
         return True
+
+    async def list_states(
+        self, statuses: Optional[set[CommandStatus]] = None
+    ) -> list[CommandState]:
+        """Scan all command:* keys and return the parsed states.
+
+        Cursor-based scan_iter (not KEYS) so it is safe on a shared Redis.
+        Unparseable records are skipped with a warning. When `statuses` is
+        given, only states with a matching status are returned.
+        """
+        out: list[CommandState] = []
+        async for key in self.redis.scan_iter(match=f"{self.PREFIX}:*"):
+            raw = await self.redis.get(key)
+            if not raw:
+                continue
+            try:
+                state = CommandState.model_validate_json(raw)
+            except Exception:
+                _logger.warning("Skipping unparseable command state at key %s", key)
+                continue
+            if statuses is None or state.status in statuses:
+                out.append(state)
+        return out

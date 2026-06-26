@@ -22,6 +22,7 @@ from fastapi.responses import HTMLResponse
 from app.core.config import get_settings
 from app.core.dependencies import (
     get_current_user,
+    get_current_user_cookie_or_header,
     get_trace_cache_repository,
 )
 from app.core.log_viewer_template import LOG_VIEWER_HTML
@@ -213,6 +214,7 @@ async def get_formatted_job_trace(
     byte_offset: int = Query(0, ge=0, description="Byte offset of the last seen log byte; only newer bytes are returned"),
     line_num: int = Query(1, ge=1, description="Line number to assign to the first returned line"),
     project_id: int | None = Query(None, description="GitLab project ID"),
+    current_user: User = Depends(get_current_user_cookie_or_header(["deploy_api"])),
     trace_cache: TraceCacheRepository = Depends(get_trace_cache_repository),
 ) -> ApiResponse[FormattedLogResponse]:
     svc = _get_deploy_service(project_id, trace_cache=trace_cache)
@@ -248,9 +250,16 @@ async def view_job(
         )
         job_web_url = gitlab_root
 
+    trace_url = f"/api/v1/deploy/jobs/{job_id}/trace/ui?project_id={target_project_id}"
+    meta_html = (
+        f'<div><span class="label">Project ID</span><code>{target_project_id}</code></div>'
+        f'<div><span class="label">Job ID</span><code>{job_id}</code></div>'
+        f'<div><a class="error-link" href="{job_web_url}" target="_blank" rel="noopener">Open in GitLab</a></div>'
+    )
     return LOG_VIEWER_HTML.format(
-        job_id=job_id,
-        project_id=target_project_id,
-        gitlab_url=gitlab_root,
-        job_web_url=job_web_url,
+        title=f"Job Log Viewer | {job_id}",
+        heading=f"Job: {job_id}",
+        trace_url=trace_url,
+        terminal_statuses_json="['success','failed','canceled','skipped','manual']",
+        meta_html=meta_html,
     )

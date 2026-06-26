@@ -1,0 +1,39 @@
+---
+# Live-log demo playbook — prints the current timestamp repeatedly so you can
+# watch the command log viewer (/api/v1/command/execution/<id>/view) stream
+# output in real time.
+#
+# WHY it streams (verified): ansible buffers a single task's output until that
+# task finishes, so a `loop` on ONE task dumps every iteration at the end — no
+# live effect. Instead we `include_tasks` a small tick file N times; each
+# included task completes on its own, so its output flushes immediately. The
+# run-ansible.sh `tee` writes each chunk to the log the viewer tails, so lines
+# appear one tick at a time.
+#
+# Tunables (pass via the API `arguments`, surfaced as extra-vars):
+#   clock_count    how many timestamps to print   (default 30)
+#   clock_interval seconds to wait between prints  (default 2)
+#
+# Total run time ≈ clock_count * clock_interval seconds.
+- name: Live clock — stream timestamps to the log
+  hosts: nodes
+  gather_facts: false
+  vars:
+    clock_count: 30
+    clock_interval: 2
+  tasks:
+    - name: Announce start
+      ansible.builtin.debug:
+        msg: >-
+          Clock starting on {{ inventory_hostname }} —
+          {{ clock_count }} ticks, every {{ clock_interval }}s.
+
+    - name: Tick the clock
+      ansible.builtin.include_tasks: clock_tick.yml
+      loop: "{{ range(1, clock_count | int + 1) | list }}"
+      loop_control:
+        loop_var: tick_num
+
+    - name: Announce done
+      ansible.builtin.debug:
+        msg: "Clock finished on {{ inventory_hostname }}."

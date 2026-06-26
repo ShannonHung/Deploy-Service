@@ -12,13 +12,15 @@ Responsibilities:
 
 from __future__ import annotations
 
+import html
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Form, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 
@@ -26,7 +28,10 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.router import api_router
 from app.core.config import get_settings
+from app.core.dependencies import set_access_cookie, safe_next_path
+from app.core.login_template import LOGIN_HTML
 from app.core.exceptions import (
+    AuthException,
     BaseAppException,
     app_exception_handler,
     unhandled_exception_handler,
@@ -150,16 +155,56 @@ def create_app() -> FastAPI:
         summary="Login — obtain a JWT access token",
     )
     async def token_endpoint(
+        response: Response,
         form_data: OAuth2PasswordRequestForm = Depends(),
     ) -> OAuth2TokenResponse:
         svc = AuthService(JsonUserRepository(settings.USERS_JSON_PATH))
         user = await svc.authenticate(form_data.username, form_data.password)
         token_data = await svc.generate_token(user)
+        # Also set the JWT as an HttpOnly, same-origin cookie so the HTML log
+        # viewers (which cannot attach a Bearer header to their fetch() polls)
+        # are authenticated. NOTE: Swagger's /token call is an XHR whose
+        # Set-Cookie the browser does NOT persist — for a browser-first login
+        # use GET/POST /login below. API/Swagger callers keep using the
+        # access_token from the response body as a Bearer header.
+        set_access_cookie(response, token_data.access_token, token_data.expires_in)
         return OAuth2TokenResponse(
             access_token=token_data.access_token,
             token_type=token_data.token_type,
             expires_in=token_data.expires_in,
         )
+
+    # Browser-first login: a real same-origin form whose POST sets the cookie
+    # and redirects to `next`. This is what makes the HTML log viewer usable by
+    # just opening a URL (Swagger's XHR /token cannot persist the cookie).
+    @app.get("/login", response_class=HTMLResponse, tags=["auth"], summary="Login page (browser)")
+    async def login_page(next: str = "/docs", error: str = ""):
+        safe_next = html.escape(safe_next_path(next), quote=True)
+        error_html = f'<div class="error">{html.escape(error)}</div>' if error else ""
+        return LOGIN_HTML.format(next=safe_next, error=error_html)
+
+    @app.post("/login", tags=["auth"], summary="Login form submit (browser)")
+    async def login_submit(
+        response: Response,
+        form_data: OAuth2PasswordRequestForm = Depends(),
+        next: str = Form("/docs"),
+    ):
+        target = safe_next_path(next)
+        svc = AuthService(JsonUserRepository(settings.USERS_JSON_PATH))
+        try:
+            user = await svc.authenticate(form_data.username, form_data.password)
+        except AuthException:
+            # Re-render the form with an error (no cookie set).
+            safe_next = html.escape(target, quote=True)
+            body = LOGIN_HTML.format(
+                next=safe_next,
+                error='<div class="error">Invalid username or password.</div>',
+            )
+            return HTMLResponse(body, status_code=200)
+        token_data = await svc.generate_token(user)
+        redirect = RedirectResponse(url=target, status_code=303)
+        set_access_cookie(redirect, token_data.access_token, token_data.expires_in)
+        return redirect
 
     app.include_router(api_router)
 
