@@ -44,20 +44,20 @@ def test_mark_failed_exit_code_and_output_optional():
 
 def test_anti_injection_pass():
     svc = CommandService(None)  # repo not used for this method
-    svc._validate_anti_injection("safe_string_123")
+    svc._executor._validate_anti_injection("safe_string_123")
 
 def test_anti_injection_fail():
     svc = CommandService(None)
     with pytest.raises(CommandExecutionException):
-        svc._validate_anti_injection("ls; rm -rf /")
+        svc._executor._validate_anti_injection("ls; rm -rf /")
     with pytest.raises(CommandExecutionException):
-        svc._validate_anti_injection("$(whoami)")
+        svc._executor._validate_anti_injection("$(whoami)")
     with pytest.raises(CommandExecutionException):
-        svc._validate_anti_injection("a & b")
+        svc._executor._validate_anti_injection("a & b")
     with pytest.raises(CommandExecutionException):
-        svc._validate_anti_injection("a | b")
+        svc._executor._validate_anti_injection("a | b")
     with pytest.raises(CommandExecutionException):
-        svc._validate_anti_injection("`whoami`")
+        svc._executor._validate_anti_injection("`whoami`")
 
 
 # ── bastion_type wiring ────────────────────────────────────────────────────
@@ -125,7 +125,7 @@ async def test_bastion_type_explicit_in_option_overrides_node_type_map(monkeypat
         option=CommandOption(timeout_seconds=30, bastion_type="type2"),
         arguments={"key_word": "ssh"},
     )
-    ctx = await svc._prepare_execution("test_admin", "rid", req)
+    ctx = await svc._executor._prepare_execution("test_admin", "rid", req)
     assert ctx.resolved_host.ip == "10.10.10.10"
     assert ctx.resolved_host.metadata["bastion_type"] == "type2"
 
@@ -142,7 +142,7 @@ async def test_bastion_type_derived_from_node_type_map_when_no_option(monkeypatc
         option=CommandOption(timeout_seconds=30),
         arguments={"key_word": "ssh"},
     )
-    ctx = await svc._prepare_execution("test_admin", "rid", req)
+    ctx = await svc._executor._prepare_execution("test_admin", "rid", req)
     assert ctx.resolved_host.ip == "10.20.30.40"
     assert ctx.resolved_host.metadata["bastion_type"] == "type1"
 
@@ -161,7 +161,7 @@ async def test_unknown_node_type_not_in_map_raises_with_clear_message(monkeypatc
     )
 
     with pytest.raises(CommandExecutionException) as exc_info:
-        await svc._prepare_execution("test_admin", "rid", req)
+        await svc._executor._prepare_execution("test_admin", "rid", req)
 
     msg = str(exc_info.value)
     assert "unknown-hw" in msg

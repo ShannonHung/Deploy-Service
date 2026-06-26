@@ -34,13 +34,13 @@ def _whitelist(cmd):
 
 def _svc_for_prepare(cmd, monkeypatch):
     svc = CommandService(repo=MagicMock(), inventory_repo=None)
-    monkeypatch.setattr(svc, "_load_user_whitelist", lambda u: _whitelist(cmd))
+    monkeypatch.setattr(svc._executor, "_load_user_whitelist", lambda u: _whitelist(cmd))
     monkeypatch.setattr(svc._ssh, "_load_ssh_config", lambda t: SSHConnectionConfig(auth_method="key", key_base64="x"))
 
     fake_resolver = MagicMock()
     fake_resolver.resolve = AsyncMock(return_value=ResolvedHost(ip="1.2.3.4", source_input="localhost"))
     monkeypatch.setattr(
-        "app.services.command_service.create_host_resolver",
+        "app.services.command_executor.create_host_resolver",
         lambda *a, **k: fake_resolver,
     )
     return svc
@@ -66,21 +66,21 @@ CMD = CommandWhitelistConfig(
 async def test_missing_optional_arg_is_allowed(monkeypatch):
     svc = _svc_for_prepare(CMD, monkeypatch)
     # No 'limit' supplied — must NOT raise.
-    ctx = await svc._prepare_execution("admin", "r1", _req({"inventory": "a/b.ini"}))
+    ctx = await svc._executor._prepare_execution("admin", "r1", _req({"inventory": "a/b.ini"}))
     assert ctx is not None
 
 
 async def test_missing_required_arg_still_raises(monkeypatch):
     svc = _svc_for_prepare(CMD, monkeypatch)
     with pytest.raises(CommandExecutionException):
-        await svc._prepare_execution("admin", "r1", _req({"limit": "node1"}))  # inventory missing
+        await svc._executor._prepare_execution("admin", "r1", _req({"limit": "node1"}))  # inventory missing
 
 
 async def test_supplied_optional_arg_is_regex_validated(monkeypatch):
     svc = _svc_for_prepare(CMD, monkeypatch)
     with pytest.raises(CommandExecutionException):
         # 'limit' supplied but violates its regex (uppercase).
-        await svc._prepare_execution("admin", "r1", _req({"inventory": "a/b.ini", "limit": "NODE!"}))
+        await svc._executor._prepare_execution("admin", "r1", _req({"inventory": "a/b.ini", "limit": "NODE!"}))
 
 
 # ── _build_pipeline drops the flag+value pair of an omitted optional arg ──────
@@ -99,13 +99,13 @@ def _ctx_for_build(args, run_id=None):
 
 def test_build_pipeline_keeps_supplied_optional():
     svc = CommandService(repo=None, inventory_repo=None)
-    flat = svc._pipeline_builder.build(_ctx_for_build({"inventory": "a/b.ini", "limit": "node1"}))[0]
+    flat = svc._executor._pipeline_builder.build(_ctx_for_build({"inventory": "a/b.ini", "limit": "node1"}))[0]
     assert flat == ["/x/run-ansible.sh", "--inventory", "a/b.ini", "--limit", "node1"]
 
 
 def test_build_pipeline_drops_omitted_optional_flag_and_value():
     svc = CommandService(repo=None, inventory_repo=None)
-    flat = svc._pipeline_builder.build(_ctx_for_build({"inventory": "a/b.ini"}))[0]
+    flat = svc._executor._pipeline_builder.build(_ctx_for_build({"inventory": "a/b.ini"}))[0]
     # --limit and its {limit} value must both be gone; required parts stay.
     assert flat == ["/x/run-ansible.sh", "--inventory", "a/b.ini"]
     assert "--limit" not in flat

@@ -23,7 +23,7 @@ def _svc():
 
 def test_non_logged_wrapper_streams_output_over_channel():
     # run_log_path=None → legacy behaviour: no redirect, output goes to the PIPE.
-    wrapper = _svc()._build_step_wrapper(run_log_path=None)
+    wrapper = _svc()._executor._build_step_wrapper(run_log_path=None)
     joined = " ".join(wrapper)
     assert "setsid" in joined
     assert "echo $$ >&2" in joined          # PGID handshake kept
@@ -36,7 +36,7 @@ def test_non_logged_wrapper_streams_output_over_channel():
 
 def test_logged_wrapper_severs_channel_and_detaches():
     log = "/var/log/ansible-runs/abc.log"
-    wrapper = _svc()._build_step_wrapper(run_log_path=log)
+    wrapper = _svc()._executor._build_step_wrapper(run_log_path=log)
     # The wrapper is [..., "sh", "-c", <script>, "_"]; inspect the sh script.
     script = wrapper[wrapper.index("-c") + 1]
     assert "echo $$ >&2" in script          # PGID handshake still first
@@ -116,7 +116,7 @@ async def test_logged_startup_failure_raises_when_no_ready(monkeypatch):
     svc = CommandService(repo=MagicMock(), inventory_repo=None)
     try:
         with __import__("pytest").raises(Exception):
-            await svc._execute_pipeline(ctx, cmd_id, "preview")
+            await svc._executor._execute_pipeline(ctx, cmd_id, "preview")
     finally:
         cs.pool_remove(cmd_id)
 
@@ -132,7 +132,7 @@ async def test_logged_startup_success_captures_pgid(monkeypatch):
 
     svc = CommandService(repo=MagicMock(), inventory_repo=None)
     try:
-        final = await svc._execute_pipeline(ctx, cmd_id, "preview")
+        final = await svc._executor._execute_pipeline(ctx, cmd_id, "preview")
     finally:
         cs.pool_remove(cmd_id)
     assert final is proc

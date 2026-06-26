@@ -42,5 +42,5 @@ async def test_prepare_execution_resolves_cluster_host(tmp_path, monkeypatch):
         command_name="noop", host="taiwan-taipei-my-cluster",
         host_type=HostType.CLUSTER, username="root",
     )
-    ctx = await svc._prepare_execution("admin", "req-1", req)
+    ctx = await svc._executor._prepare_execution("admin", "req-1", req)
     assert ctx.resolved_host.ip == "10.1.0.1"

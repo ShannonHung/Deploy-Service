@@ -103,7 +103,7 @@ def _patch_asyncssh():
     fake_conn.create_process = AsyncMock(side_effect=RuntimeError("stop here"))
     return (
         patch(
-            "app.services.command_service.asyncssh.connect",
+            "app.services.command_executor.asyncssh.connect",
             new=AsyncMock(return_value=fake_conn),
         ),
         fake_conn,
