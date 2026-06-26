@@ -22,6 +22,7 @@ from fastapi.responses import HTMLResponse
 from app.core.config import get_settings
 from app.core.dependencies import (
     get_current_user,
+    get_current_user_cookie_or_header,
     get_trace_cache_repository,
 )
 from app.core.log_viewer_template import LOG_VIEWER_HTML
@@ -213,6 +214,7 @@ async def get_formatted_job_trace(
     byte_offset: int = Query(0, ge=0, description="Byte offset of the last seen log byte; only newer bytes are returned"),
     line_num: int = Query(1, ge=1, description="Line number to assign to the first returned line"),
     project_id: int | None = Query(None, description="GitLab project ID"),
+    current_user: User = Depends(get_current_user_cookie_or_header(["deploy_api"])),
     trace_cache: TraceCacheRepository = Depends(get_trace_cache_repository),
 ) -> ApiResponse[FormattedLogResponse]:
     svc = _get_deploy_service(project_id, trace_cache=trace_cache)
