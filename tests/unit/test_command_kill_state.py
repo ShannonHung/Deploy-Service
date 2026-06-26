@@ -78,7 +78,7 @@ async def test_kill_killable_still_reaches_killed(monkeypatch):
     state = _state(killable=True, pgids=[906])
     svc = CommandService(repo=_Repo(state), inventory_repo=None)
     entry = RunningCommandEntry(host_ip="1.2.3.4", killable=True, pgids=[906])
-    monkeypatch.setattr(svc, "_do_kill_via_connection", AsyncMock())
+    monkeypatch.setattr(svc._lifecycle, "_do_kill_via_connection", AsyncMock())
     cs.pool_add("c1", entry)
     try:
         await svc.kill_command("c1")
@@ -95,7 +95,7 @@ async def test_force_kill_overrides_non_killable(monkeypatch):
     svc = CommandService(repo=_Repo(state), inventory_repo=None)
     entry = RunningCommandEntry(host_ip="1.2.3.4", killable=False, pgids=[906])
     killed = AsyncMock()
-    monkeypatch.setattr(svc, "_do_kill_via_connection", killed)
+    monkeypatch.setattr(svc._lifecycle, "_do_kill_via_connection", killed)
     cs.pool_add("c1", entry)
     try:
         await svc.kill_command("c1", force=True)
@@ -111,7 +111,7 @@ async def test_non_force_kill_still_respects_non_killable(monkeypatch):
     state = _state(killable=False)
     svc = CommandService(repo=_Repo(state), inventory_repo=None)
     killed = AsyncMock()
-    monkeypatch.setattr(svc, "_do_kill_via_connection", killed)
+    monkeypatch.setattr(svc._lifecycle, "_do_kill_via_connection", killed)
     await svc.kill_command("c1")  # force defaults False
     killed.assert_not_awaited()
     assert state.status != CommandStatus.KILLING
