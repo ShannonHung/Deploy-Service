@@ -33,6 +33,13 @@ from app.core.exceptions import (
 class ClusterRef(BaseModel):
     id: str
     name: str
+    # The inventory API may omit context or return null; tolerate both.
+    context: str = ""
+
+    @field_validator("context", mode="before")
+    @classmethod
+    def _coerce_null_context(cls, v: object) -> object:
+        return v if v is not None else ""
 
 
 class NodeInfo(BaseModel):
