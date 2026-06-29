@@ -12,14 +12,19 @@
 set -euo pipefail
 
 # ── Fixed config (not user-overridable by design) ────────────────────────────
-# INVENTORY_REPO env var can override the repo for local testing (e.g. file://).
-INVENTORY_REPO="${INVENTORY_REPO:-https://gitlab.com/ShannonHung/my-ansible-inventory.git}"
+# Inventory repos all live under one GitLab namespace; --inventory-repo-name
+# selects which repo to clone (default my-ansible-inventory). The full
+# INVENTORY_REPO env var still wins when set (e.g. a file:// path for local
+# testing) — see resolve_inventory_repo().
+INVENTORY_NAMESPACE="https://gitlab.com/ShannonHung"
+INVENTORY_REPO_NAME="my-ansible-inventory"   # --inventory-repo-name <name>
 IMAGE="shannonhung/ansible-runner:latest"
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 PLAYBOOK=""
 INVENTORY=""               # path RELATIVE to the inventory repo root
 INVENTORY_REF="main"       # branch/tag of the inventory repo to clone
+TOKEN_FILE=""              # --token-file <path>: read clone token from a file
 TAGS=""
 LIMIT=""
 EXTRA_VARS=""
@@ -45,6 +50,12 @@ Required:
 
 Options:
   --inventory-ref <ref>   Branch/tag of the inventory repo to clone (default: main)
+  --inventory-repo-name <name>  Inventory repo under the fixed namespace to clone
+                          (default: my-ansible-inventory; e.g. ansible-inventory-v2)
+  --token-file <path>     Read the clone auth token from this file. Token may also
+                          come from the INVENTORY_TOKEN env var. The token is NEVER
+                          accepted as a CLI value, never logged, and never placed in
+                          the clone URL (passed to git via GIT_ASKPASS only).
   --tags <tags>           Comma-separated ansible --tags
   --limit <pattern>       ansible --limit host/group pattern
   --extra-vars <k=v ...>  ansible --extra-vars string
@@ -60,12 +71,16 @@ Options:
                           manual `docker exec` debugging; do NOT run ansible
   -h, --help              Show this help
 
-The inventory repo (fixed) is cloned fresh each run and removed afterward:
-  https://gitlab.com/ShannonHung/my-ansible-inventory.git
+The inventory repo is cloned fresh each run (under the fixed namespace
+https://gitlab.com/ShannonHung) and removed afterward. Select it with
+--inventory-repo-name; private repos authenticate via INVENTORY_TOKEN or
+--token-file.
 
 Example:
   ./run-ansible.sh --playbook ping.yml --inventory taipei/multinode.ini --limit node1
   ./run-ansible.sh -d --playbook ping.yml --inventory taipei/multinode.ini --limit node1
+  INVENTORY_TOKEN=glpat-xxx ./run-ansible.sh --inventory-repo-name ansible-inventory-v2 \
+      --playbook ping.yml --inventory taipei/multinode.ini
 EOF
 }
 
@@ -76,6 +91,8 @@ parse_args() {
       --playbook)            PLAYBOOK="$2"; shift 2 ;;
       --inventory)           INVENTORY="$2"; shift 2 ;;
       --inventory-ref)       INVENTORY_REF="$2"; shift 2 ;;
+      --inventory-repo-name) INVENTORY_REPO_NAME="$2"; shift 2 ;;
+      --token-file)          TOKEN_FILE="$2"; shift 2 ;;
       --tags)                TAGS="$2"; shift 2 ;;
       --limit)               LIMIT="$2"; shift 2 ;;
       --extra-vars)          EXTRA_VARS="$2"; shift 2 ;;
@@ -113,6 +130,19 @@ parse_args() {
   fi
   if [[ "$WANT_DEBUG" -eq 1 ]]; then MODE="debug"; fi
   if [[ "$WANT_DRY_RUN" -eq 1 ]]; then MODE="dry-run"; fi
+
+  # The repo name becomes part of a clone URL path segment, so constrain it.
+  if [[ ! "$INVENTORY_REPO_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "Error: --inventory-repo-name must match ^[A-Za-z0-9._-]+$" >&2
+    exit 2
+  fi
+
+  # --token-file must point at a readable file if given (the token VALUE is read
+  # later, in resolve_token, so failures here don't depend on docker/git).
+  if [[ -n "$TOKEN_FILE" && ! -f "$TOKEN_FILE" ]]; then
+    echo "Error: --token-file not found: $TOKEN_FILE" >&2
+    exit 2
+  fi
 }
 
 # ── Per-run log file + self-cleaning ─────────────────────────────────────────
@@ -151,9 +181,49 @@ resolve_log_file() {
   fi
 }
 
+# ── Inventory repo URL + auth resolution ─────────────────────────────────────
+# The full INVENTORY_REPO env var wins when set (e.g. a file:// path for local
+# testing); otherwise the URL is built from the fixed namespace + repo name.
+resolve_inventory_repo() {
+  if [[ -n "${INVENTORY_REPO:-}" ]]; then
+    INVENTORY_REPO="$INVENTORY_REPO"
+  else
+    INVENTORY_REPO="$INVENTORY_NAMESPACE/$INVENTORY_REPO_NAME.git"
+  fi
+}
+
+# Resolve the clone token (optional). Precedence: --token-file > INVENTORY_TOKEN
+# env > none (anonymous). Sets CLONE_TOKEN and AUTH_SOURCE (file|env|anonymous).
+# The token VALUE is never echoed; only its source is reported.
+resolve_token() {
+  CLONE_TOKEN=""
+  AUTH_SOURCE="anonymous"
+  if [[ -n "$TOKEN_FILE" ]]; then
+    # Strip a single trailing newline; keep the rest verbatim.
+    CLONE_TOKEN="$(cat "$TOKEN_FILE")"
+    AUTH_SOURCE="file"
+  elif [[ -n "${INVENTORY_TOKEN:-}" ]]; then
+    CLONE_TOKEN="$INVENTORY_TOKEN"
+    AUTH_SOURCE="env"
+  fi
+}
+
+# Human-readable auth label for the summary (never the token value).
+auth_label() {
+  case "$AUTH_SOURCE" in
+    file) echo "token (file)" ;;
+    env)  echo "token (env)" ;;
+    *)    echo "anonymous" ;;
+  esac
+}
+
 # ── Fresh inventory clone (deleted on exit, always latest) ───────────────────
+# cleanup removes the clone dir AND the askpass helper (if one was created).
 cleanup() {
   rm -rf "$CLONE_DIR"
+  # Guard with `|| true`: a false [[ -n ... ]] would otherwise become the trap's
+  # exit status and clobber the script's real exit code (the EXIT trap runs last).
+  [[ -n "${ASKPASS_HELPER:-}" ]] && rm -f "$ASKPASS_HELPER" || true
 }
 
 clone_inventory() {
@@ -167,7 +237,32 @@ clone_inventory() {
   trap cleanup EXIT
 
   echo ">> Cloning inventory (ref: $INVENTORY_REF) from $INVENTORY_REPO into $CLONE_DIR"
-  git clone --depth 1 --branch "$INVENTORY_REF" "$INVENTORY_REPO" "$CLONE_DIR"
+  echo ">> Auth: $AUTH_SOURCE"
+
+  if [[ -n "$CLONE_TOKEN" ]]; then
+    # Authenticate WITHOUT leaking the token: a GIT_ASKPASS helper supplies it on
+    # demand. The token reaches git only via the helper's stdout — never in argv
+    # (ps), the URL, git config, or any log. The helper reads the token from its
+    # own env (exported solely for this git call), so the token is not baked into
+    # the helper file's contents either. The URL carries only the "oauth2"
+    # username; for a GitLab PAT the username is ignored and the token (as
+    # password) is what authenticates.
+    ASKPASS_HELPER="$(mktemp "$CLONE_PARENT/askpass.XXXXXX")"
+    chmod 600 "$ASKPASS_HELPER"
+    printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$INVENTORY_GIT_TOKEN"' \
+      > "$ASKPASS_HELPER"
+    chmod 700 "$ASKPASS_HELPER"
+    local auth_url="${INVENTORY_REPO/https:\/\//https://oauth2@}"
+    GIT_ASKPASS="$ASKPASS_HELPER" GIT_TERMINAL_PROMPT=0 \
+      INVENTORY_GIT_TOKEN="$CLONE_TOKEN" \
+      git clone --depth 1 --branch "$INVENTORY_REF" "$auth_url" "$CLONE_DIR"
+  else
+    # Anonymous clone. Neutralize any inherited GIT_ASKPASS/SSH_ASKPASS from the
+    # caller's environment (e.g. an editor or CI) and disable interactive prompts
+    # so a private repo fails fast instead of hanging or using stray credentials.
+    GIT_ASKPASS="" SSH_ASKPASS="" GIT_TERMINAL_PROMPT=0 \
+      git clone --depth 1 --branch "$INVENTORY_REF" "$INVENTORY_REPO" "$CLONE_DIR"
+  fi
 
   # Reject path traversal so the relative path can't escape the cloned repo.
   case "$INVENTORY" in
@@ -197,6 +292,7 @@ print_summary() {
 ══════════════════ RUN SUMMARY ══════════════════
   Inventory repo : $INVENTORY_REPO
   Inventory ref  : $INVENTORY_REF
+  Auth           : $(auth_label)
   Clone dir      : $CLONE_DIR
   Inventory file : /inventory/$INVENTORY
   Playbook       : /playbooks/$PLAYBOOK
@@ -335,6 +431,8 @@ run_normal() {
 
 main() {
   parse_args "$@"
+  resolve_inventory_repo
+  resolve_token
   resolve_log_file
   clone_inventory
   build_cmd_args
