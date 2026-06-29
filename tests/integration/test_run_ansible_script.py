@@ -190,3 +190,51 @@ def test_dry_run_prints_but_does_not_run_docker(tmp_path):
     assert "docker run" in res.stdout            # printed as text
     assert not (tmp_path / "docker_was_called").exists()  # never executed
     assert not (tmp_path / "dr1.exit").exists()   # nothing ran → no sidecar
+
+
+def test_debug_starts_idle_container_and_keeps_clone(tmp_path):
+    # Fake docker records its argv so we can assert `run -d ... sleep infinity`.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "git").write_text(
+        "#!/usr/bin/env bash\n"
+        'dest="${@: -1}"\n'
+        'mkdir -p "$dest/taipei"\n'
+        'printf "[all]\\nnode1\\n" > "$dest/taipei/multinode.ini"\n'
+    )
+    (bindir / "docker").write_text(
+        "#!/usr/bin/env bash\n"
+        f'echo "$@" >> "{tmp_path}/docker_argv"\n'
+        "exit 0\n"
+    )
+    for f in ("git", "docker"):
+        os.chmod(bindir / f, 0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+           "SKIP_SSH_KEY_CHECK": "1",
+           # Keep the clone dir beside a known, inspectable parent.
+           "CLONE_PARENT": str(tmp_path / "clones")}
+    res = subprocess.run(
+        ["bash", str(SCRIPT), "--playbook", "ping.yml", "--inventory",
+         "taipei/multinode.ini", "--no-pull", "--log-dir", str(tmp_path),
+         "--debug", "--run-id", "dbg1"],
+        capture_output=True, text=True, env=env,
+    )
+    assert res.returncode == 0, res.stderr
+    argv = (tmp_path / "docker_argv").read_text()
+    assert "run -d" in argv
+    assert "sleep infinity" in argv
+    assert "ansible-debug-dbg1" in argv
+    # Guidance printed
+    assert "docker exec -it ansible-debug-dbg1 bash" in res.stdout
+    assert "ansible-playbook -i /inventory/taipei/multinode.ini" in res.stdout
+    assert "docker rm -f ansible-debug-dbg1" in res.stdout
+    # No sidecar; clone dir kept (not removed by trap)
+    assert not (tmp_path / "dbg1.exit").exists()
+    clones = list((tmp_path / "clones").glob("ansible-inventory.*"))
+    assert clones, "debug mode must keep the clone dir"
+
+
+def test_debug_and_dry_run_mutually_exclusive(tmp_path):
+    res = _run(tmp_path, "--debug", "--dry-run")
+    assert res.returncode == 2
+    assert "debug" in (res.stderr + res.stdout).lower()

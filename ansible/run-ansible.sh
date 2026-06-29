@@ -27,6 +27,8 @@ IMAGE_TAG=""               # --image-tag <tag>: shannonhung/ansible-runner:<tag>
 IMAGE_SET=0                # 1 if --image was given (for mutual-exclusion check)
 PULL=1                     # docker pull before run; --no-pull disables
 MODE="normal"              # normal | debug | dry-run
+WANT_DEBUG=0
+WANT_DRY_RUN=0
 LOG_DIR="$(pwd)/logs"
 RUN_ID=""                  # per-run id from deploy-service; log is <run_id>.log
 LOG_RETENTION_DAYS=3       # prune <log-dir>/*.log older than this many days
@@ -54,6 +56,8 @@ Options:
   --log-retention-days <n>  Delete <log-dir>/*.log older than n days (default: 3; 0 disables)
   --ssh-key <path>        SSH private key to mount (default: ../data/ssh_keys/client_key)
   --dry-run               Clone inventory + print summary/commands; do NOT pull or run docker
+  -d, --debug             Start the runner container idle (sleep infinity) for
+                          manual `docker exec` debugging; do NOT run ansible
   -h, --help              Show this help
 
 The inventory repo (fixed) is cloned fresh each run and removed afterward:
@@ -61,6 +65,7 @@ The inventory repo (fixed) is cloned fresh each run and removed afterward:
 
 Example:
   ./run-ansible.sh --playbook ping.yml --inventory taipei/multinode.ini --limit node1
+  ./run-ansible.sh -d --playbook ping.yml --inventory taipei/multinode.ini --limit node1
 EOF
 }
 
@@ -81,7 +86,8 @@ parse_args() {
       --run-id)              RUN_ID="$2"; shift 2 ;;
       --log-retention-days)  LOG_RETENTION_DAYS="$2"; shift 2 ;;
       --ssh-key)             SSH_KEY="$2"; shift 2 ;;
-      --dry-run)             MODE="dry-run"; shift ;;
+      --dry-run)             WANT_DRY_RUN=1; shift ;;
+      -d|--debug)            WANT_DEBUG=1; shift ;;
       -h|--help)             usage; exit 0 ;;
       *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
     esac
@@ -100,6 +106,13 @@ parse_args() {
   if [[ -n "$IMAGE_TAG" ]]; then
     IMAGE="shannonhung/ansible-runner:$IMAGE_TAG"
   fi
+
+  if [[ "$WANT_DEBUG" -eq 1 && "$WANT_DRY_RUN" -eq 1 ]]; then
+    echo "Error: --debug and --dry-run are mutually exclusive." >&2
+    exit 2
+  fi
+  if [[ "$WANT_DEBUG" -eq 1 ]]; then MODE="debug"; fi
+  if [[ "$WANT_DRY_RUN" -eq 1 ]]; then MODE="dry-run"; fi
 }
 
 # ── Per-run log file + self-cleaning ─────────────────────────────────────────
@@ -219,6 +232,57 @@ run_dry_run() {
   exit 0
 }
 
+# ── Debug: start an idle container for manual `docker exec` poking ───────────
+# No --rm (container is kept), trap disarmed (clone dir is kept) — both are
+# needed so the operator can exec in and inspect /inventory and networking.
+run_debug() {
+  if [[ -n "$RUN_ID" ]]; then
+    DEBUG_CONTAINER="ansible-debug-$RUN_ID"
+  else
+    DEBUG_CONTAINER="ansible-debug-$(basename "$CLONE_DIR" | sed 's/^ansible-inventory\.//')"
+  fi
+
+  print_summary
+
+  if [[ "$PULL" -eq 1 ]]; then
+    echo ">> Pulling latest image: $IMAGE"
+    docker pull "$IMAGE"
+  fi
+
+  # Keep the clone dir alive for the running container.
+  trap - EXIT
+
+  docker run -d --name "$DEBUG_CONTAINER" \
+    --add-host host.docker.internal:host-gateway \
+    -v "$CLONE_DIR":/inventory:ro \
+    -v "$SSH_KEY":/root/.ssh/id_key:ro \
+    -e ANSIBLE_PRIVATE_KEY_FILE=/root/.ssh/id_key \
+    -e ANSIBLE_COLLECTIONS_PATH=/collections \
+    "$IMAGE" \
+    sleep infinity
+
+  local manual="ansible-playbook -i /inventory/$INVENTORY /playbooks/$PLAYBOOK"
+  [[ -n "$TAGS"  ]] && manual="$manual --tags $TAGS"
+  [[ -n "$LIMIT" ]] && manual="$manual --limit $LIMIT"
+
+  cat <<EOF
+══════════════ DEBUG MODE ══════════════
+Container '$DEBUG_CONTAINER' is running (sleep infinity).
+
+Enter it:
+  docker exec -it $DEBUG_CONTAINER bash
+
+Run the playbook manually inside:
+  $manual
+
+When done, clean up:
+  docker rm -f $DEBUG_CONTAINER
+  rm -rf $CLONE_DIR
+══════════════════════════════════════════
+EOF
+  exit 0
+}
+
 # ── Normal run: docker run + tee + EXIT marker + sidecar + re-exit ───────────
 run_normal() {
   if [[ "$PULL" -eq 1 ]]; then
@@ -270,6 +334,7 @@ main() {
   clone_inventory
   build_cmd_args
   case "$MODE" in
+    debug)   run_debug ;;
     dry-run) run_dry_run ;;
     *)       run_normal ;;
   esac
