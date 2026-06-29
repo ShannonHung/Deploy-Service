@@ -129,3 +129,17 @@ def test_no_sidecar_without_run_id(tmp_path):
     assert res.returncode == 0, res.stderr
     assert (tmp_path / "run.log").read_text().rstrip().endswith("=== EXIT 0 ===")
     assert not list(tmp_path.glob("*.exit"))
+
+
+def test_summary_and_docker_run_logged(tmp_path):
+    res = _run_with_fake_docker(tmp_path, 0, "--run-id", "sum1", "--limit", "node1")
+    out = res.stdout
+    assert res.returncode == 0, res.stderr
+    assert "RUN SUMMARY" in out
+    assert "Inventory repo" in out
+    assert "Inventory resolved: /inventory/taipei/multinode.ini" in out
+    # Full docker run command (mounts/env/add-host), not just the ansible part.
+    assert "docker run" in out
+    assert "host.docker.internal:host-gateway" in out
+    assert "/inventory:ro" in out
+    assert "ANSIBLE_PRIVATE_KEY_FILE=/root/.ssh/id_key" in out

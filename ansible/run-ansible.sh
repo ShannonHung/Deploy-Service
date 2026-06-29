@@ -151,6 +151,7 @@ clone_inventory() {
     find "$CLONE_DIR" -name '*.ini' -o -name '*.yml' -path '*inventor*' 2>/dev/null | sed "s#$CLONE_DIR/#  #" >&2 || true
     exit 2
   fi
+  echo ">> Inventory resolved: /inventory/$INVENTORY"
 }
 
 # ── Build the ansible command (discrete args, no eval) ───────────────────────
@@ -162,12 +163,46 @@ build_cmd_args() {
   return 0
 }
 
+# ── Logging: human-readable run summary + the exact docker command ───────────
+print_summary() {
+  cat <<EOF
+══════════════════ RUN SUMMARY ══════════════════
+  Inventory repo : $INVENTORY_REPO
+  Inventory ref  : $INVENTORY_REF
+  Clone dir      : $CLONE_DIR
+  Inventory file : /inventory/$INVENTORY
+  Playbook       : /playbooks/$PLAYBOOK
+  Image          : $IMAGE
+  SSH key        : $SSH_KEY
+  Ansible cmd    : ${CMD_ARGS[*]}
+  Log file       : $LOG_FILE
+══════════════════════════════════════════════════
+EOF
+}
+
+print_docker_run() {
+  cat <<EOF
+>> docker run command:
+   docker run --rm \\
+     --add-host host.docker.internal:host-gateway \\
+     -v $CLONE_DIR:/inventory:ro \\
+     -v $SSH_KEY:/root/.ssh/id_key:ro \\
+     -e ANSIBLE_PRIVATE_KEY_FILE=/root/.ssh/id_key \\
+     -e ANSIBLE_COLLECTIONS_PATH=/collections \\
+     $IMAGE \\
+     ${CMD_ARGS[*]}
+EOF
+}
+
 # ── Normal run: docker run + tee + EXIT marker + sidecar + re-exit ───────────
 run_normal() {
   if [[ "$PULL" -eq 1 ]]; then
     echo ">> Pulling latest image: $IMAGE"
     docker pull "$IMAGE"
   fi
+
+  print_summary
+  print_docker_run
 
   echo ">> Running: ${CMD_ARGS[*]}"
   echo ">> Logs:    $LOG_FILE (tee'd from stdout)"
