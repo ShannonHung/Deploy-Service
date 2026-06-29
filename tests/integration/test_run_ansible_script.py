@@ -153,4 +153,4 @@ def test_image_tag_sets_image(tmp_path):
 def test_image_and_image_tag_mutually_exclusive(tmp_path):
     res = _run(tmp_path, "--image", "foo/bar:1", "--image-tag", "v1.2")
     assert res.returncode == 2
-    assert "image" in (res.stderr + res.stdout).lower()
+    assert "mutually exclusive" in (res.stderr + res.stdout).lower()
