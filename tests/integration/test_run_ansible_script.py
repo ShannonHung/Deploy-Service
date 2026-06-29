@@ -238,3 +238,54 @@ def test_debug_and_dry_run_mutually_exclusive(tmp_path):
     res = _run(tmp_path, "--debug", "--dry-run")
     assert res.returncode == 2
     assert "debug" in (res.stderr + res.stdout).lower()
+
+
+def test_debug_fails_fast_on_missing_ssh_key(tmp_path):
+    """Debug mode must fail early with exit 2 when the SSH key is missing.
+
+    Verifies the guard added to run_debug() mirrors the one in run_normal():
+      if [[ "${SKIP_SSH_KEY_CHECK:-0}" != "1" && ! -f "$SSH_KEY" ]]; then
+        echo "Error: ssh key not found: $SSH_KEY" >&2; exit 2
+      fi
+    SKIP_SSH_KEY_CHECK is intentionally NOT set so the guard fires.
+    """
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    # Fake git: creates the inventory file so clone_inventory() passes.
+    (bindir / "git").write_text(
+        "#!/usr/bin/env bash\n"
+        'dest="${@: -1}"\n'
+        'mkdir -p "$dest/taipei"\n'
+        'printf "[all]\\nnode1\\n" > "$dest/taipei/multinode.ini"\n'
+    )
+    # Fake docker: records whether it was ever called.
+    (bindir / "docker").write_text(
+        "#!/usr/bin/env bash\n"
+        f'touch "{tmp_path}/docker_was_called"\n'
+        "exit 0\n"
+    )
+    for f in ("git", "docker"):
+        os.chmod(bindir / f, 0o755)
+
+    # No SKIP_SSH_KEY_CHECK; point --ssh-key at a path that definitely doesn't exist.
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+    res = subprocess.run(
+        ["bash", str(SCRIPT), "--playbook", "ping.yml", "--inventory",
+         "taipei/multinode.ini", "--no-pull", "--debug",
+         "--ssh-key", "/nonexistent/key",
+         "--log-dir", str(tmp_path)],
+        capture_output=True, text=True, env=env,
+    )
+
+    assert res.returncode == 2, (
+        f"Expected exit 2 (missing key guard), got {res.returncode}.\n"
+        f"stdout: {res.stdout}\nstderr: {res.stderr}"
+    )
+    combined = res.stderr + res.stdout
+    assert "ssh key not found" in combined.lower(), (
+        f"Expected 'ssh key not found' in output. Got:\n{combined}"
+    )
+    # The container must NOT have been started.
+    assert not (tmp_path / "docker_was_called").exists(), (
+        "docker must not be called when the SSH key is missing in debug mode"
+    )

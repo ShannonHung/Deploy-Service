@@ -244,6 +244,11 @@ run_debug() {
 
   print_summary
 
+  if [[ "${SKIP_SSH_KEY_CHECK:-0}" != "1" && ! -f "$SSH_KEY" ]]; then
+    echo "Error: ssh key not found: $SSH_KEY" >&2
+    exit 2
+  fi
+
   if [[ "$PULL" -eq 1 ]]; then
     echo ">> Pulling latest image: $IMAGE"
     docker pull "$IMAGE"
