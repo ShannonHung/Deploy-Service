@@ -23,6 +23,8 @@ INVENTORY_REF="main"       # branch/tag of the inventory repo to clone
 TAGS=""
 LIMIT=""
 EXTRA_VARS=""
+IMAGE_TAG=""               # --image-tag <tag>: shannonhung/ansible-runner:<tag>
+IMAGE_SET=0                # 1 if --image was given (for mutual-exclusion check)
 PULL=1                     # docker pull before run; --no-pull disables
 LOG_DIR="$(pwd)/logs"
 RUN_ID=""                  # per-run id from deploy-service; log is <run_id>.log
@@ -44,6 +46,7 @@ Options:
   --limit <pattern>       ansible --limit host/group pattern
   --extra-vars <k=v ...>  ansible --extra-vars string
   --image <name>          Runner image full name (default: shannonhung/ansible-runner:latest)
+  --image-tag <tag>       Use shannonhung/ansible-runner:<tag> (mutually exclusive with --image)
   --no-pull               Skip `docker pull` (use a locally-built image)
   --log-dir <path>        Host dir to mount for logs (default: ./logs)
   --run-id <id>           Per-run id; log is <log-dir>/<id>.log (^[A-Za-z0-9_-]+$)
@@ -69,7 +72,8 @@ parse_args() {
       --tags)                TAGS="$2"; shift 2 ;;
       --limit)               LIMIT="$2"; shift 2 ;;
       --extra-vars)          EXTRA_VARS="$2"; shift 2 ;;
-      --image)               IMAGE="$2"; shift 2 ;;
+      --image)               IMAGE="$2"; IMAGE_SET=1; shift 2 ;;
+      --image-tag)           IMAGE_TAG="$2"; shift 2 ;;
       --no-pull)             PULL=0; shift ;;
       --log-dir)             LOG_DIR="$2"; shift 2 ;;
       --run-id)              RUN_ID="$2"; shift 2 ;;
@@ -84,6 +88,14 @@ parse_args() {
     echo "Error: --playbook and --inventory are required." >&2
     usage
     exit 2
+  fi
+
+  if [[ "$IMAGE_SET" -eq 1 && -n "$IMAGE_TAG" ]]; then
+    echo "Error: --image and --image-tag are mutually exclusive." >&2
+    exit 2
+  fi
+  if [[ -n "$IMAGE_TAG" ]]; then
+    IMAGE="shannonhung/ansible-runner:$IMAGE_TAG"
   fi
 }
 

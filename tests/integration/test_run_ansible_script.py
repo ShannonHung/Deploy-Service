@@ -143,3 +143,14 @@ def test_summary_and_docker_run_logged(tmp_path):
     assert "host.docker.internal:host-gateway" in out
     assert "/inventory:ro" in out
     assert "ANSIBLE_PRIVATE_KEY_FILE=/root/.ssh/id_key" in out
+
+
+def test_image_tag_sets_image(tmp_path):
+    res = _run_with_fake_docker(tmp_path, 0, "--run-id", "it1", "--image-tag", "v1.2")
+    assert res.returncode == 0, res.stderr
+    assert "shannonhung/ansible-runner:v1.2" in res.stdout
+
+def test_image_and_image_tag_mutually_exclusive(tmp_path):
+    res = _run(tmp_path, "--image", "foo/bar:1", "--image-tag", "v1.2")
+    assert res.returncode == 2
+    assert "image" in (res.stderr + res.stdout).lower()
