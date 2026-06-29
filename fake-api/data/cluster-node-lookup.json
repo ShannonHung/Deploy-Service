@@ -13,6 +13,7 @@
   },
   "cluster": {
     "id": "123",
-    "name": "type1-cluster-c1"
+    "name": "type1-cluster-c1",
+    "context": "c1"
   }
 }
