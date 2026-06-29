@@ -154,3 +154,39 @@ def test_image_and_image_tag_mutually_exclusive(tmp_path):
     res = _run(tmp_path, "--image", "foo/bar:1", "--image-tag", "v1.2")
     assert res.returncode == 2
     assert "mutually exclusive" in (res.stderr + res.stdout).lower()
+
+
+def _run_with_failing_docker(tmp_path, *extra):
+    """Fake git that creates the inventory, plus a fake docker that exits 99 and
+    writes a sentinel file — so any docker invocation is detectable."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "git").write_text(
+        "#!/usr/bin/env bash\n"
+        'dest="${@: -1}"\n'
+        'mkdir -p "$dest/taipei"\n'
+        'printf "[all]\\nnode1\\n" > "$dest/taipei/multinode.ini"\n'
+    )
+    (bindir / "docker").write_text(
+        "#!/usr/bin/env bash\n"
+        f'touch "{tmp_path}/docker_was_called"\n'
+        "exit 99\n"
+    )
+    for f in ("git", "docker"):
+        os.chmod(bindir / f, 0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+           "SKIP_SSH_KEY_CHECK": "1"}
+    return subprocess.run(
+        ["bash", str(SCRIPT), "--playbook", "ping.yml", "--inventory",
+         "taipei/multinode.ini", "--no-pull", "--log-dir", str(tmp_path), *extra],
+        capture_output=True, text=True, env=env,
+    )
+
+
+def test_dry_run_prints_but_does_not_run_docker(tmp_path):
+    res = _run_with_failing_docker(tmp_path, "--dry-run", "--run-id", "dr1")
+    assert res.returncode == 0, res.stderr
+    assert "RUN SUMMARY" in res.stdout
+    assert "docker run" in res.stdout            # printed as text
+    assert not (tmp_path / "docker_was_called").exists()  # never executed
+    assert not (tmp_path / "dr1.exit").exists()   # nothing ran → no sidecar

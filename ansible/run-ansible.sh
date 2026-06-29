@@ -26,6 +26,7 @@ EXTRA_VARS=""
 IMAGE_TAG=""               # --image-tag <tag>: shannonhung/ansible-runner:<tag>
 IMAGE_SET=0                # 1 if --image was given (for mutual-exclusion check)
 PULL=1                     # docker pull before run; --no-pull disables
+MODE="normal"              # normal | debug | dry-run
 LOG_DIR="$(pwd)/logs"
 RUN_ID=""                  # per-run id from deploy-service; log is <run_id>.log
 LOG_RETENTION_DAYS=3       # prune <log-dir>/*.log older than this many days
@@ -52,6 +53,7 @@ Options:
   --run-id <id>           Per-run id; log is <log-dir>/<id>.log (^[A-Za-z0-9_-]+$)
   --log-retention-days <n>  Delete <log-dir>/*.log older than n days (default: 3; 0 disables)
   --ssh-key <path>        SSH private key to mount (default: ../data/ssh_keys/client_key)
+  --dry-run               Clone inventory + print summary/commands; do NOT pull or run docker
   -h, --help              Show this help
 
 The inventory repo (fixed) is cloned fresh each run and removed afterward:
@@ -79,6 +81,7 @@ parse_args() {
       --run-id)              RUN_ID="$2"; shift 2 ;;
       --log-retention-days)  LOG_RETENTION_DAYS="$2"; shift 2 ;;
       --ssh-key)             SSH_KEY="$2"; shift 2 ;;
+      --dry-run)             MODE="dry-run"; shift ;;
       -h|--help)             usage; exit 0 ;;
       *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
     esac
@@ -206,6 +209,16 @@ print_docker_run() {
 EOF
 }
 
+# ── Dry-run: clone + print everything, but never pull or run docker ──────────
+# Distinct from DRYRUN=1 (which exits before clone). The clone dir is still
+# removed by the EXIT trap armed in clone_inventory.
+run_dry_run() {
+  print_summary
+  print_docker_run
+  echo ">> --dry-run: skipping docker pull and docker run."
+  exit 0
+}
+
 # ── Normal run: docker run + tee + EXIT marker + sidecar + re-exit ───────────
 run_normal() {
   if [[ "$PULL" -eq 1 ]]; then
@@ -256,7 +269,10 @@ main() {
   resolve_log_file
   clone_inventory
   build_cmd_args
-  run_normal
+  case "$MODE" in
+    dry-run) run_dry_run ;;
+    *)       run_normal ;;
+  esac
 }
 
 main "$@"
