@@ -26,15 +26,19 @@ class SshSupport:
     def _load_ssh_config(self, target: str) -> SSHConnectionConfig:
         """Load SSH connection configuration for the specified target cluster.
 
-        Looks for ``data/SSH-{target}.json`` first; falls back to
-        ``data/SSH-default.json`` if the target-specific file is absent.
+        Looks for ``SSH-{target}.json`` first; falls back to
+        ``SSH-default.json`` if the target-specific file is absent. Both are
+        read from ``SSH_CONFIG_DIR`` (which falls back to ``COMMAND_CONFIG_DIR``
+        when unset) — kept separate from the command whitelists so the SSH
+        configs, which carry private keys, can live on a Vault-backed mount.
 
         Raises:
             BaseAppException: If neither file exists (500 — operator misconfig).
         """
-        file_path = os.path.join(settings.COMMAND_CONFIG_DIR, f"SSH-{target}.json")
+        config_dir = settings.SSH_CONFIG_DIR or settings.COMMAND_CONFIG_DIR
+        file_path = os.path.join(config_dir, f"SSH-{target}.json")
         if not os.path.exists(file_path):
-            file_path = os.path.join(settings.COMMAND_CONFIG_DIR, "SSH-default.json")
+            file_path = os.path.join(config_dir, "SSH-default.json")
             if not os.path.exists(file_path):
                 raise BaseAppException(
                     "SSH configuration not found.",
