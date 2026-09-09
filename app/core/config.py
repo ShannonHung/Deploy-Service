@@ -59,7 +59,16 @@ class Settings(BaseSettings):
     GITLAB_TRACE_HARD_CAP_BYTES: int = 10 * 1024 * 1024
 
     # ── SSH Command API ───────────────────────────────────────────────────────
+    # Directory holding the per-account command whitelists
+    # (``allow-commands-{account}.json``).
     COMMAND_CONFIG_DIR: str = "data"
+    # Directory holding the SSH connection configs (``SSH-{target}.json`` /
+    # ``SSH-default.json``). Kept separate from COMMAND_CONFIG_DIR because SSH
+    # configs carry secrets (private keys), so in production this can point at a
+    # Vault-backed mount while the whitelists stay on the ordinary config dir.
+    # When left empty it falls back to COMMAND_CONFIG_DIR (see SshSupport), so
+    # existing single-directory deployments keep working unchanged.
+    SSH_CONFIG_DIR: str = ""
     COMMAND_DEFAULT_TIMEOUT: int = 30
     COMMAND_KILL_GRACE_SECONDS: int = 2
     COMMAND_MAX_CONCURRENCY: int = 20
