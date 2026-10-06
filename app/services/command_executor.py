@@ -367,7 +367,8 @@ class CommandExecutor:
                 req.port,
             )
             return DryRunSSHConnection(
-                closes_after_run=context.cmd_config.disconnects_ssh
+                closes_after_run=context.cmd_config.disconnects_ssh,
+                run_seconds=get_settings().DRY_RUN_COMMAND_SECONDS,
             )
 
         authenticator = create_authenticator(context.ssh_config)

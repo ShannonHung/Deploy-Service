@@ -119,6 +119,14 @@ class Settings(BaseSettings):
     # startup (see app/main.py).
     DRY_RUN_MODE: bool = False
 
+    # How long a dry-run command pretends to run, in seconds. Zero means it
+    # finishes immediately, which is right for most e2e assertions. Raise it to
+    # exercise the kill path: a command that completes instantly has already
+    # reached a terminal state before a kill request can arrive, so
+    # RUNNING → KILLING → KILLED is otherwise unreachable. Ignored unless
+    # DRY_RUN_MODE is true.
+    DRY_RUN_COMMAND_SECONDS: float = 0.0
+
     _APP_ENV: str = os.getenv("APP_ENV", "dev")
     model_config = SettingsConfigDict(
         # test: only .env.test — never .env.local, so CI/test runs are isolated.

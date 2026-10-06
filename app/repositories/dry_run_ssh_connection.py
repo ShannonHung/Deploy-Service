@@ -32,6 +32,7 @@ process. Two stderr reads are protocol-significant and are documented at
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Optional
 
@@ -89,7 +90,15 @@ class _DryRunStream:
 
 
 class DryRunProcess:
-    """Stand-in for ``asyncssh.SSHClientProcess``."""
+    """Stand-in for ``asyncssh.SSHClientProcess``.
+
+    *run_seconds* makes the fake run take measurable time. A dry-run command
+    otherwise completes the instant it starts, which means it has already
+    reached a terminal state before a kill request can arrive — so the
+    RUNNING → KILLING → KILLED path could never be exercised. The delay is
+    applied in ``communicate()``, the point where the executor waits for the
+    run to finish.
+    """
 
     def __init__(
         self,
@@ -97,6 +106,7 @@ class DryRunProcess:
         stdout_body: str = _DRY_RUN_STDOUT,
         stderr_lines: Optional[list[str]] = None,
         exit_status: int = 0,
+        run_seconds: float = 0.0,
     ) -> None:
         self.command = command
         self.returncode = exit_status
@@ -105,9 +115,12 @@ class DryRunProcess:
         self.stderr = _DryRunStream(lines=stderr_lines or [f"{_DRY_RUN_PGID}\n"])
         self.stdout = _DryRunStream(body=stdout_body)
         self._stdout_body = stdout_body
+        self._run_seconds = run_seconds
 
     async def communicate(self) -> tuple[str, str]:
         """Drain both streams. ``_collect_output`` merges the pair."""
+        if self._run_seconds:
+            await asyncio.sleep(self._run_seconds)
         return self._stdout_body, ""
 
     async def wait(self) -> "DryRunProcess":
@@ -132,11 +145,13 @@ class DryRunSSHConnection:
         stdout_body: str = _DRY_RUN_STDOUT,
         exit_status: int = 0,
         stderr_lines: Optional[list[str]] = None,
+        run_seconds: float = 0.0,
     ) -> None:
         self._closes_after_run = closes_after_run
         self._stdout_body = stdout_body
         self._exit_status = exit_status
         self._stderr_lines = stderr_lines
+        self._run_seconds = run_seconds
         self._closed = False
 
     async def run(self, command: str, check: bool = False, **_kwargs: Any):
@@ -148,6 +163,13 @@ class DryRunSSHConnection:
         # a plain stdout body would fail to parse and reject the request.
         if "--version" in command:
             return _DryRunResult(stdout="999.0.0\n")
+
+        # `kill -0 -<pgid>` probes whether the group still exists between the
+        # TERM and KILL phases. Reporting "gone" (non-zero, as the real kill
+        # does for a dead group) lets the two-phase kill finish at SIGTERM
+        # instead of always escalating to SIGKILL against nothing.
+        if command.startswith("kill -0 "):
+            return _DryRunResult(stdout="", exit_status=1)
 
         if self._closes_after_run:
             self._closed = True
@@ -166,6 +188,7 @@ class DryRunSSHConnection:
             stdout_body=self._stdout_body,
             stderr_lines=list(self._stderr_lines) if self._stderr_lines else None,
             exit_status=self._exit_status,
+            run_seconds=self._run_seconds,
         )
 
     def is_closed(self) -> bool:

@@ -122,3 +122,41 @@ async def test_custom_stderr_lines_are_served_in_order():
 
 def test_process_can_be_constructed_directly():
     assert DryRunProcess(command="x").command == "x"
+
+
+# ── kill-path behaviour (T5) ──────────────────────────────────────────────────
+
+
+async def test_kill_probe_reports_process_gone():
+    """`kill -0 -<pgid>` probes whether the group survived SIGTERM. Reporting
+    non-zero (as a real kill does for a dead group) lets the two-phase kill
+    finish at SIGTERM instead of always escalating to SIGKILL against nothing.
+    """
+    result = await DryRunSSHConnection().run("kill -0 -999001")
+    assert result.exit_status != 0
+
+
+async def test_kill_signals_are_accepted():
+    for cmd in ("kill -TERM -999001", "kill -KILL -999001"):
+        assert (await DryRunSSHConnection().run(cmd)).exit_status == 0
+
+
+async def test_run_seconds_delays_completion():
+    """Without a delay a dry-run command is terminal before a kill can arrive,
+    so RUNNING → KILLING → KILLED would be unreachable."""
+    import time
+
+    conn = DryRunSSHConnection(run_seconds=0.2)
+    proc = await conn.create_process("sleep 60")
+    started = time.monotonic()
+    await proc.communicate()
+    assert time.monotonic() - started >= 0.15
+
+
+async def test_zero_run_seconds_completes_immediately():
+    import time
+
+    proc = await DryRunSSHConnection().create_process("ls")
+    started = time.monotonic()
+    await proc.communicate()
+    assert time.monotonic() - started < 0.1
