@@ -34,7 +34,17 @@ class SshSupport:
 
         Raises:
             BaseAppException: If neither file exists (500 — operator misconfig).
+
+        In dry-run no SSH connection is ever opened, so a synthetic config is
+        returned rather than requiring real key material on disk. That is the
+        point: a dry-run instance holds no production secrets. The value is
+        never used to authenticate — DryRunSSHConnection ignores it — but the
+        surrounding validation in _prepare_execution still runs. See
+        docs/arch/dry-run-mode.md.
         """
+        if get_settings().DRY_RUN_MODE:
+            return SSHConnectionConfig(auth_method="key", key_base64="")
+
         config_dir = settings.SSH_CONFIG_DIR or settings.COMMAND_CONFIG_DIR
         file_path = os.path.join(config_dir, f"SSH-{target}.json")
         if not os.path.exists(file_path):
