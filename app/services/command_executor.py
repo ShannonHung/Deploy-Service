@@ -21,6 +21,7 @@ from app.domain.command import (
 )
 from app.core.config import get_settings
 from app.repositories.ssh_auth_repository import create_authenticator
+from app.repositories.dry_run_ssh_connection import DryRunSSHConnection
 from app.repositories.command_state_repository import CommandStateRepository
 from app.repositories.inventory_repository import InventoryRepository
 from app.repositories.host_resolver import create_host_resolver
@@ -347,7 +348,28 @@ class CommandExecutor:
             UpstreamTimeoutException:    Connect exceeded the configured timeout (504).
             UpstreamUnavailableException: Host unreachable, DNS failure, auth rejected,
                                           or other connect-time failure (502).
+
+        ORDERING IS LOAD-BEARING FOR DRY-RUN. execute_command runs
+        _check_capacity → _prepare_execution (whitelist, argument regex,
+        anti-injection) → _pipeline_builder.build → _connect. Dry-run replaces
+        only this method's return value, which is safe precisely because every
+        validation and security check already ran above it. If validation ever
+        moves below _connect, or _connect moves earlier, dry-run silently turns
+        into a validation bypass that still answers 200. See
+        docs/arch/dry-run-mode.md.
         """
+        # Read live rather than via the module-level `settings` snapshot, which
+        # is bound at import and would not see a test's cache_clear().
+        if get_settings().DRY_RUN_MODE:
+            logger.warning(
+                "DRY-RUN | op=ssh.connect | host=%s:%s | no SSH connection opened",
+                context.resolved_host.ip,
+                req.port,
+            )
+            return DryRunSSHConnection(
+                closes_after_run=context.cmd_config.disconnects_ssh
+            )
+
         authenticator = create_authenticator(context.ssh_config)
         conn_kwargs = authenticator.get_connect_kwargs()
         ip = context.resolved_host.ip
