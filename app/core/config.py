@@ -107,6 +107,18 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     COMMAND_RESULT_TTL_SECONDS: int = 86400
 
+    # ── Dry-run (e2e pipeline testing) ────────────────────────────────────────
+    # When true, the outermost side-effecting collaborators (GitLab client, SSH
+    # connection, inventory client) are replaced with stubs, while routing,
+    # auth, validation and all business logic still run. See
+    # docs/arch/dry-run-mode.md.
+    #
+    # Deliberately an environment variable and NOT a request parameter: a
+    # per-request switch would let any caller holding a valid token make a real
+    # deployment silently no-op. Combining this with APP_ENV=prod is refused at
+    # startup (see app/main.py).
+    DRY_RUN_MODE: bool = False
+
     _APP_ENV: str = os.getenv("APP_ENV", "dev")
     model_config = SettingsConfigDict(
         # test: only .env.test — never .env.local, so CI/test runs are isolated.

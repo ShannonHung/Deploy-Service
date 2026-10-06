@@ -27,7 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.router import api_router
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.dependencies import set_access_cookie, safe_next_path
 from app.core.login_template import LOGIN_HTML
 from app.core.exceptions import (
@@ -91,8 +91,47 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+def _guard_dry_run(settings: Settings) -> None:
+    """Refuse to start a production process in dry-run mode.
+
+    Dry-run makes every write path a no-op that still answers 200. In
+    production that is worse than an outage: deploys and commands silently do
+    nothing while every caller sees success. This is a hard failure rather than
+    a warning precisely because warnings get ignored — the process must not
+    reach a serving state.
+
+    Called before the FastAPI instance is built so a misconfigured deploy dies
+    at import time rather than passing a health check. See
+    docs/arch/dry-run-mode.md.
+    """
+    if not settings.DRY_RUN_MODE:
+        return
+
+    if settings.APP_ENV == "prod":
+        raise RuntimeError(
+            "DRY_RUN_MODE=true is refused when APP_ENV=prod: every write path "
+            "would become a silent no-op that still returns 200. Unset "
+            "DRY_RUN_MODE, or run the dry-run instance under a non-prod APP_ENV."
+        )
+
+    _logger.warning(
+        "═══════════════════════════════════════════════════════════════════\n"
+        "  DRY-RUN MODE ACTIVE (APP_ENV=%s)\n"
+        "  No real side effects will be performed: GitLab pipelines are not\n"
+        "  triggered and SSH commands are not executed. Every response is\n"
+        "  marked with \"dry_run\": true.\n"
+        "  This instance must never serve production traffic.\n"
+        "═══════════════════════════════════════════════════════════════════",
+        settings.APP_ENV,
+    )
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
+
+    # Fail fast before the app exists — a prod process must not reach a
+    # serving state with every write path stubbed out.
+    _guard_dry_run(settings)
 
     # Shadows the module-level `app = create_app()` below; that is the
     # app-factory pattern, and renaming either would be worse.
