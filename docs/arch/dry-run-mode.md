@@ -187,6 +187,19 @@ The fake must honour both, otherwise `logged` commands fail in dry-run. For a
 `disconnects_ssh: true` command the fake must report `is_closed() == True` after the run so
 the fire-and-forget path is taken.
 
+**The fake derives "is this a detached run?" from the command string, not from a
+constructor flag** (T6). The step wrapper emits `echo $$ >&2; echo READY >&2; exec …` for a
+`logged` command and `echo $$ >&2; exec …` otherwise, so the command string already states
+which protocol applies — exactly as it does for the real shell on the far side. Taking a flag
+instead would let the fake answer `READY` to a wrapper that had silently stopped asking for
+it, turning a genuine protocol break into a passing test. A stub that agrees with whatever it
+is told is the failure mode this whole design exists to avoid.
+
+For the same reason the fake answers the control_node log reads (`stat -c %s`, `tail -c +n`,
+`tail -n n`) with a canned body and **honours the byte offset**: the viewer polls from
+`next_byte_offset`, so a fake that ignored it would re-serve the same bytes forever and the
+poll would never terminate.
+
 This keeps both handlers — and therefore the Redis state machine, log tailing, and the
 `RUNNING → SUCCESS` transitions — genuinely executing against the stub.
 
