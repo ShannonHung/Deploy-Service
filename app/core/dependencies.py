@@ -139,6 +139,7 @@ def get_current_user_cookie_or_header(
 from app.clients.inventory_client import InventoryClient, InventoryTokenManager
 from app.core.redis_client import RedisClient
 from app.repositories.command_state_repository import CommandStateRepository
+from app.repositories.dry_run_inventory_repository import DryRunInventoryRepository
 from app.repositories.inventory_repository import InventoryRepository
 from app.repositories.trace_cache_repository import (
     RedisTraceCache,
@@ -179,6 +180,12 @@ async def get_command_state_repository() -> CommandStateRepository:
 
 
 async def get_inventory_repository() -> InventoryRepository:
+    # Dry-run replaces only the data source: InventoryService's node_type →
+    # bastion_type mapping and regex matching, and the HostResolver IP-label
+    # extraction, all still run. See docs/arch/dry-run-mode.md.
+    s = get_settings()
+    if s.DRY_RUN_MODE:
+        return DryRunInventoryRepository(ip_label=s.INVENTORY_IP_LABEL)
     return _build_inventory_client()
 
 

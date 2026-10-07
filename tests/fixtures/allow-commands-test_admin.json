@@ -10,6 +10,33 @@
       "arguments": []
     },
     {
+      "command_name": "run_ansible",
+      "description": "Logged-command example, shaped after the production run_ansible entry: the run detaches its output to a control_node log file and the server injects {run_id}. Exercises the READY handshake and the /view + /trace path.",
+      "disconnects_ssh": false,
+      "killable": true,
+      "logged": true,
+      "pipeline": [
+        {
+          "command": [
+            "/opt/deploy-service/ansible/run-ansible.sh",
+            "--playbook",
+            "{playbook}",
+            "--log-dir",
+            "/var/log/deploy-service",
+            "--run-id",
+            "{run_id}"
+          ]
+        }
+      ],
+      "arguments": [
+        {
+          "name": "playbook",
+          "type": "string",
+          "validation_regex": "^(ping|fail|clock)\\.yml$"
+        }
+      ]
+    },
+    {
       "command_name": "sleep",
       "description": "sleep",
       "disconnects_ssh": false,

@@ -1,0 +1,16 @@
+{
+  "name": "host_restricted",
+  "allow_hosts": ["^10\\."],
+  "deny_hosts": ["^192\\.0\\.2\\.20$"],
+  "allow_commands": [
+    {
+      "command_name": "net_info",
+      "description": "Reachable command for a user whose host rules block it. allow_hosts permits only 10.0.0.0/8, while the dry-run inventory resolves into RFC 5737 TEST-NET-1 (192.0.2.0/24) — so the request passes the command whitelist and is then refused by the host check, which is the branch under test.",
+      "disconnects_ssh": false,
+      "killable": true,
+      "output_format": "json",
+      "pipeline": [{"command": ["ip", "-j", "-br", "addr"]}],
+      "arguments": []
+    }
+  ]
+}

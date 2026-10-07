@@ -9,6 +9,7 @@ import asyncssh
 
 from app.domain.command import SSHConnectionConfig, CommandState
 from app.core.config import get_settings
+from app.repositories.dry_run_ssh_connection import DryRunSSHConnection
 from app.repositories.ssh_auth_repository import create_authenticator
 from app.core.exceptions import (
     UpstreamTimeoutException,
@@ -34,7 +35,17 @@ class SshSupport:
 
         Raises:
             BaseAppException: If neither file exists (500 — operator misconfig).
+
+        In dry-run no SSH connection is ever opened, so a synthetic config is
+        returned rather than requiring real key material on disk. That is the
+        point: a dry-run instance holds no production secrets. The value is
+        never used to authenticate — DryRunSSHConnection ignores it — but the
+        surrounding validation in _prepare_execution still runs. See
+        docs/arch/dry-run-mode.md.
         """
+        if get_settings().DRY_RUN_MODE:
+            return SSHConnectionConfig(auth_method="key", key_base64="")
+
         config_dir = settings.SSH_CONFIG_DIR or settings.COMMAND_CONFIG_DIR
         file_path = os.path.join(config_dir, f"SSH-{target}.json")
         if not os.path.exists(file_path):
@@ -61,7 +72,22 @@ class SshSupport:
         Raises:
             UpstreamTimeoutException / UpstreamUnavailableException:
                 SSH connect failure (mirrors ``_connect``).
+
+        This is the *second* real-SSH entry point (``CommandExecutor._connect``
+        is the first) and it is reached from a different pod than the one that
+        started the run, so dry-run has to stub it too — otherwise cross-pod
+        kill, log tailing and orphan heal would all attempt a real connection.
+        See docs/arch/dry-run-mode.md.
         """
+        if get_settings().DRY_RUN_MODE:
+            logger.warning(
+                "DRY-RUN | op=ssh.connect_control_node | host=%s:%s | "
+                "no SSH connection opened",
+                state.resolved_ip,
+                state.port,
+            )
+            return DryRunSSHConnection()
+
         ssh_config = self._load_ssh_config(state.ssh_config)
         authenticator = create_authenticator(ssh_config)
         conn_kwargs = authenticator.get_connect_kwargs()

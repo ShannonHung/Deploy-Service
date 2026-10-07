@@ -107,6 +107,26 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     COMMAND_RESULT_TTL_SECONDS: int = 86400
 
+    # ── Dry-run (e2e pipeline testing) ────────────────────────────────────────
+    # When true, the outermost side-effecting collaborators (GitLab client, SSH
+    # connection, inventory client) are replaced with stubs, while routing,
+    # auth, validation and all business logic still run. See
+    # docs/arch/dry-run-mode.md.
+    #
+    # Deliberately an environment variable and NOT a request parameter: a
+    # per-request switch would let any caller holding a valid token make a real
+    # deployment silently no-op. Combining this with APP_ENV=prod is refused at
+    # startup (see app/main.py).
+    DRY_RUN_MODE: bool = False
+
+    # How long a dry-run command pretends to run, in seconds. Zero means it
+    # finishes immediately, which is right for most e2e assertions. Raise it to
+    # exercise the kill path: a command that completes instantly has already
+    # reached a terminal state before a kill request can arrive, so
+    # RUNNING → KILLING → KILLED is otherwise unreachable. Ignored unless
+    # DRY_RUN_MODE is true.
+    DRY_RUN_COMMAND_SECONDS: float = 0.0
+
     _APP_ENV: str = os.getenv("APP_ENV", "dev")
     model_config = SettingsConfigDict(
         # test: only .env.test — never .env.local, so CI/test runs are isolated.

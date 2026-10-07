@@ -34,6 +34,7 @@ from app.domain.pipeline_models import (
     TriggerPipelineRequest,
     FormattedLogResponse,
 )
+from app.repositories.dry_run_pipeline_repository import DryRunPipelineRepository
 from app.repositories.gitlab_auth_repository import GitlabAuthRepository
 from app.repositories.gitlab_pipeline_repository import GitlabPipelineRepository
 from app.repositories.trace_cache_repository import TraceCacheRepository
@@ -57,6 +58,14 @@ def _get_deploy_service(
     can omit it without losing functionality.
     """
     settings = get_settings()
+
+    # Dry-run swaps only the repository: everything above this line — routing,
+    # auth, validation — and everything inside DeployService still runs. The
+    # branch sits before token resolution so a dry-run instance needs no GitLab
+    # credentials at all. See docs/arch/dry-run-mode.md.
+    if settings.DRY_RUN_MODE:
+        return DeployService(DryRunPipelineRepository())
+
     target_project_id = project_id or settings.GITLAB_PROJECT_ID
     target_token = settings.GITLAB_TOKEN
 
