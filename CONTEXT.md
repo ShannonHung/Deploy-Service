@@ -73,3 +73,30 @@ which is what makes the log viewer and cross-pod recovery possible.
 when the launching pod died mid-run. The log, not Redis, is the source of truth.
 
 **Orphan run** — A Run whose launching pod died while the remote work continued.
+
+## Targets and credentials
+
+**Bastion** — The jump host that fronts a cluster, identified by its **bastion
+name** (as the inventory knows it). Depending on the host type, a Run's SSH
+target is either the Bastion itself or a node behind it — but in both cases the
+node is reached with the Bastion's credentials.
+
+**Bastion type** — The category used to pick which set of bastion mappings to
+search. A classifier, never an identity: two different Bastions share a type.
+_Avoid_: calling this the "bastion name".
+
+**SSH config** — A named credential set used to authenticate a Run's SSH
+connection. Operator-owned, carries private key material.
+
+**Fallback SSH config** — The SSH config named `default`, used whenever no more
+specific one exists.
+
+**Auto-selected SSH config** — What a caller gets by asking for the SSH config
+`default` (or omitting it): the SSH config of the Bastion fronting the target,
+if one exists,
+otherwise the Fallback SSH config. Note the asymmetry: asking for `default`
+does *not* guarantee the Fallback SSH config is used.
+
+**Effective SSH config** — The SSH config a Run actually authenticated with,
+recorded on the Run. Every later action on that Run (kill, trace, poll) uses
+the Effective SSH config, never re-selects one.

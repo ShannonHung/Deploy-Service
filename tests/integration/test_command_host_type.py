@@ -79,7 +79,19 @@ def inventory_repo():
                 ),
                 cluster=ClusterRef(id="1", name="cluster-c1"),
             ),
-        }
+        },
+        # hostname + ssh_config "default" looks up the node's Bastion to pick
+        # its SSH config (ADR 0002), so the node must have a mapping.
+        mappings={
+            "type1": [
+                BastionMapping(
+                    patterns=["cluster-.*"],
+                    runner="r1",
+                    bastion="b1",
+                    bastion_ip="10.1.1.1",
+                )
+            ]
+        },
     )
 
 

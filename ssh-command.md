@@ -668,7 +668,7 @@ pytestmark = [
 | `app/core/exceptions.py` | `CommandExecutionException` 繼承自 `BaseAppException` |
 | `app/repositories/command_state_repository.py` | Redis 狀態倉儲：封裝所有 command:{id} 的讀寫 |
 | `data/allow-commands-{role}.json` | 角色白名單設定 |
-| `data/SSH-{target}.json` | SSH 連線設定（含 Base64 編碼的金鑰） |
+| `data/SSH-{name}.json` | SSH 連線設定（含 Base64 編碼的金鑰）。`ssh_config: "default"` 會自動選用 Bastion 專屬的 `SSH-{bastion}.json`，沒有才用 `SSH-default.json`；明確指定的名稱不存在則回 400（見 ADR 0002） |
 
 ---
 
@@ -686,7 +686,8 @@ execute_command()                  ← (1) 入口點：協調整個生命週期
 │   ├─ host allow/deny check        ← IP/Hostname 黑白名單攔截
 │   ├─ argument validation          ← 依 Regex 驗證用戶輸入
 │   │    └─ _validate_anti_injection() ← 核心防注入：字元層級攔截
-│   └─ _load_ssh_config()           ← 載入 SSH 連線資訊
+│   ├─ select_ssh_config()          ← 決定 Effective SSH config（default → Bastion 專屬或 fallback）
+│   └─ _load_ssh_config()           ← 照字面載入；kill/trace/poll 也用它重載 Run 記錄的名稱
 │
 ├─ _build_pipeline()                ← (4) 指令渲染
 │   └─ _resolve_command_part()      ← 將 {placeholder} 替換為實際參數

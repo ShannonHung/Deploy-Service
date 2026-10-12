@@ -67,6 +67,17 @@ class CommandLifecycle:
                 )
                 return
 
+        # 0b. A cross-pod kill reconnects with the Run's recorded SSH config.
+        # If that config is gone, tell the caller now (400) — for the same
+        # reason as step 0: failing after the KILLING flip strands the Run.
+        if pool_get(command_id) is None:
+            try:
+                recorded = await self.repo.get(command_id)
+            except CommandExecutionException:
+                recorded = None
+            if recorded is not None:
+                self._ssh._load_ssh_config(recorded.ssh_config)
+
         # 1. Atomic State Transition to KILLING (only from RUNNING).
         success = await self.repo.update_if(
             command_id,

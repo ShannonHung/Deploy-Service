@@ -5,7 +5,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import asyncssh
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 if TYPE_CHECKING:
     # Imported for type checking only: a runtime import would create a cycle
@@ -35,6 +35,19 @@ class CommandStatus(str, Enum):
     KILLED = "killed"
     SUCCESS = "success"
     FAILED = "failed"
+
+
+# The SSH config name that means "auto-select" in a request and "the Fallback
+# SSH config" once recorded on a Run (ADR 0002).
+FALLBACK_SSH_CONFIG = "default"
+
+# SSH config names become part of a file path in a directory of private keys,
+# so only plain names are accepted — no separators, no traversal.
+_SSH_CONFIG_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def is_safe_ssh_config_name(name: str) -> bool:
+    return bool(_SSH_CONFIG_NAME_RE.match(name)) and ".." not in name
 
 
 class HostType(str, Enum):
@@ -286,11 +299,21 @@ class CommandExecutionRequest(BaseModel):
     host_type: HostType = HostType.IP
     port: int = 22
     username: str
-    ssh_config: str = "default"
+    ssh_config: str = FALLBACK_SSH_CONFIG
     option: Optional[CommandOption] = Field(default_factory=CommandOption)
     arguments: Dict[str, Any] = Field(default_factory=dict)
     # Optional caller-supplied floor; may only RAISE the whitelist minimum.
     min_script_version: Optional[str] = None
+
+    @field_validator("ssh_config")
+    @classmethod
+    def _validate_ssh_config(cls, v: str) -> str:
+        if not is_safe_ssh_config_name(v):
+            raise ValueError(
+                "ssh_config must contain only letters, digits, '.', '_' or '-' "
+                "and must not contain '..'"
+            )
+        return v
 
     @model_validator(mode="after")
     def _validate_min_script_version(self) -> "CommandExecutionRequest":
@@ -311,6 +334,14 @@ class CommandExecutionResponse(BaseModel):
     # Populated only by GET /command/execution/{id}; surfaced from CommandState.
     host_type: Optional[HostType] = None
     resolved_ip: Optional[str] = None
+    ssh_config: Optional[str] = Field(
+        default=None,
+        description=(
+            "The SSH config actually used by this Run. With ssh_config "
+            "'default' this is the Bastion's own SSH config when one is "
+            "provisioned, otherwise 'default'."
+        ),
+    )
     pgids: List[int] = Field(default_factory=list)
 
     # ── Parsed output (populated only by GET /execution/{id}?format=json) ──
@@ -435,3 +466,5 @@ class ExecutionContext:
     pipeline_cmds: List[List[str]] = field(default_factory=list)
     run_id: Optional[str] = None
     run_log_path: Optional[str] = None
+    # Name of the SSH config actually loaded (ADR 0002); recorded on the Run.
+    effective_ssh_config: str = FALLBACK_SSH_CONFIG

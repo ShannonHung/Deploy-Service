@@ -16,6 +16,7 @@ from app.services.command_service import CommandService
 import app.services.command_service as cs_mod
 import app.services.command_executor as ce_mod
 import app.services.command_pool as cp_mod
+from app.repositories.inventory_repository import BastionMapping
 from app.repositories.inventory_repository import (
     ClusterNodeInfo,
     ClusterRef,
@@ -60,7 +61,19 @@ def svc(tmp_path, monkeypatch):
                 node=NodeInfo(id="1", name="node-a01", labels={"mgmt_ip": "10.0.1.10"}),
                 cluster=ClusterRef(id="1", name="cluster-c1"),
             ),
-        }
+        },
+        # hostname + ssh_config "default" looks up the node's Bastion to pick
+        # its SSH config (ADR 0002), so the node must have a mapping.
+        mappings={
+            "type1": [
+                BastionMapping(
+                    patterns=["cluster-.*"],
+                    runner="r1",
+                    bastion="b1",
+                    bastion_ip="10.1.1.1",
+                )
+            ]
+        },
     )
     return CommandService(repo=None, inventory_repo=inventory_repo), tmp_path
 
