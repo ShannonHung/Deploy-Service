@@ -2,8 +2,9 @@
 
 The inventory endpoints (InventoryService) and the host resolvers all answer the
 same question — "which Bastion fronts this cluster?" — so the rules live here
-once: a Bastion type picks the mapping list, and the first pattern that
-fully matches the cluster name wins. Callers keep their own NotFound wording.
+once: a Bastion type picks the mapping list, the first pattern that fully
+matches the cluster name wins, and "no match" is the same NotFound for every
+caller.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import Dict, Optional
 
 from pydantic import BaseModel
 
-from app.core.exceptions import CommandExecutionException
+from app.core.exceptions import CommandExecutionException, NotFoundException
 from app.repositories.inventory_repository import BastionMapping, InventoryRepository
 
 _logger = logging.getLogger(__name__)
@@ -37,6 +38,15 @@ def bastion_type_for_node(node_type: str, node_type_map: Dict[str, str]) -> str:
             detail={"node_type": node_type, "node_type_map": node_type_map},
         )
     return bastion_type
+
+
+def pick_bastion_type(
+    override: Optional[str], node_type: str, node_type_map: Dict[str, str]
+) -> str:
+    """An explicit Bastion type wins; otherwise derive it from the node_type."""
+    if override is not None:
+        return override
+    return bastion_type_for_node(node_type, node_type_map)
 
 
 async def match_bastion(
@@ -64,3 +74,24 @@ async def match_bastion(
             if matched:
                 return BastionMatch(mapping=mapping, pattern=pattern)
     return None
+
+
+async def require_bastion(
+    repo: InventoryRepository,
+    bastion_type: str,
+    cluster_name: str,
+    *,
+    node_name: Optional[str] = None,
+) -> BastionMatch:
+    """Like match_bastion, but "no Bastion fronts this cluster" is a 404."""
+    match = await match_bastion(repo, bastion_type, cluster_name)
+    if match is not None:
+        return match
+    detail = {"cluster_name": cluster_name, "bastion_type": bastion_type}
+    if node_name is not None:
+        detail = {"node_name": node_name, **detail}
+    raise NotFoundException(
+        f"No bastion mapping matched cluster '{cluster_name}' "
+        f"for type '{bastion_type}'.",
+        detail=detail,
+    )

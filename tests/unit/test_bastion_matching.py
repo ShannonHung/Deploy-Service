@@ -3,8 +3,13 @@ against the bastion mappings of a Bastion type."""
 
 import pytest
 
-from app.core.exceptions import CommandExecutionException
-from app.repositories.bastion_matching import bastion_type_for_node, match_bastion
+from app.core.exceptions import CommandExecutionException, NotFoundException
+from app.repositories.bastion_matching import (
+    bastion_type_for_node,
+    match_bastion,
+    pick_bastion_type,
+    require_bastion,
+)
 from app.repositories.inventory_repository import BastionMapping
 from tests.fixtures.cluster import InMemoryInventoryRepository
 
@@ -46,3 +51,35 @@ def test_unmapped_node_type_raises():
     with pytest.raises(CommandExecutionException) as exc:
         bastion_type_for_node("vm", {"baremetal": "type1"})
     assert exc.value.detail["node_type"] == "vm"
+
+
+def test_pick_bastion_type_prefers_the_override():
+    assert pick_bastion_type("type2", "baremetal", {"baremetal": "type1"}) == "type2"
+
+
+def test_pick_bastion_type_falls_back_to_node_type_map():
+    assert pick_bastion_type(None, "baremetal", {"baremetal": "type1"}) == "type1"
+
+
+async def test_require_bastion_returns_the_match():
+    match = await require_bastion(_repo(), "type1", "dev-c1")
+    assert match.mapping.bastion == "b2"
+
+
+async def test_require_bastion_not_found_names_cluster_and_type():
+    with pytest.raises(NotFoundException) as exc:
+        await require_bastion(_repo(), "type1", "other")
+    assert "No bastion mapping matched cluster 'other' for type 'type1'" in str(
+        exc.value
+    )
+    assert exc.value.detail == {"cluster_name": "other", "bastion_type": "type1"}
+
+
+async def test_require_bastion_not_found_includes_node_name_when_given():
+    with pytest.raises(NotFoundException) as exc:
+        await require_bastion(_repo(), "type1", "other", node_name="node1")
+    assert exc.value.detail == {
+        "node_name": "node1",
+        "cluster_name": "other",
+        "bastion_type": "type1",
+    }
