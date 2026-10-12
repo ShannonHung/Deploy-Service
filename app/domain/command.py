@@ -334,6 +334,14 @@ class CommandExecutionResponse(BaseModel):
     # Populated only by GET /command/execution/{id}; surfaced from CommandState.
     host_type: Optional[HostType] = None
     resolved_ip: Optional[str] = None
+    ssh_config: Optional[str] = Field(
+        default=None,
+        description=(
+            "The SSH config actually used by this Run. With ssh_config "
+            "'default' this is the Bastion's own SSH config when one is "
+            "provisioned, otherwise 'default'."
+        ),
+    )
     pgids: List[int] = Field(default_factory=list)
 
     # ── Parsed output (populated only by GET /execution/{id}?format=json) ──
@@ -458,3 +466,5 @@ class ExecutionContext:
     pipeline_cmds: List[List[str]] = field(default_factory=list)
     run_id: Optional[str] = None
     run_log_path: Optional[str] = None
+    # Name of the SSH config actually loaded (ADR 0002); recorded on the Run.
+    effective_ssh_config: str = FALLBACK_SSH_CONFIG

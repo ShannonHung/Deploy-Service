@@ -70,3 +70,43 @@ def test_named_config_is_loaded_literally_without_fallback(monkeypatch, tmp_path
         SshSupport()._load_ssh_config("nope")
     assert exc.value.http_status == 400
     assert exc.value.detail == {"ssh_config": "nope"}
+
+
+# ── Auto-selection (ADR 0002) ────────────────────────────────────────────────
+
+
+def _write(directory, name):
+    (directory / f"SSH-{name}.json").write_text(json.dumps(_CFG))
+
+
+@pytest.fixture
+def ssh_dir(monkeypatch, tmp_path):
+    _write_default(tmp_path)
+    monkeypatch.setattr(ssh_mod.settings, "SSH_CONFIG_DIR", str(tmp_path))
+    return tmp_path
+
+
+def test_explicit_name_is_used_as_is_even_with_a_bastion(ssh_dir):
+    assert SshSupport().select_ssh_config("cluster1", "b1") == "cluster1"
+
+
+def test_default_without_a_bastion_is_the_fallback(ssh_dir):
+    assert SshSupport().select_ssh_config("default", None) == "default"
+
+
+def test_default_with_a_provisioned_bastion_selects_the_bastion(ssh_dir):
+    _write(ssh_dir, "b1")
+    assert SshSupport().select_ssh_config("default", "b1") == "b1"
+
+
+def test_default_with_an_unprovisioned_bastion_falls_back_and_warns(ssh_dir, caplog):
+    with caplog.at_level("WARNING"):
+        assert SshSupport().select_ssh_config("default", "b9") == "default"
+    assert "b9" in caplog.text
+
+
+@pytest.mark.parametrize("bad", ["../etc", "a/b", "..", "b 1"])
+def test_unsafe_bastion_name_is_an_upstream_data_error(ssh_dir, bad):
+    with pytest.raises(BaseAppException) as exc:
+        SshSupport().select_ssh_config("default", bad)
+    assert exc.value.http_status == 500

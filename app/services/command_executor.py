@@ -247,7 +247,10 @@ class CommandExecutor:
                         detail={"argument": arg_conf.name},
                     )
 
-        ssh_config = self._ssh._load_ssh_config(req.ssh_config)
+        effective_ssh_config = self._ssh.select_ssh_config(
+            req.ssh_config, resolved.bastion_name
+        )
+        ssh_config = self._ssh._load_ssh_config(effective_ssh_config)
 
         return ExecutionContext(
             username=username,
@@ -257,6 +260,7 @@ class CommandExecutor:
             cmd_config=cmd_config,
             ssh_config=ssh_config,
             resolved_host=resolved,
+            effective_ssh_config=effective_ssh_config,
         )
 
     def _compute_log_path(self, command_id: str) -> str:
@@ -776,7 +780,9 @@ class CommandExecutor:
             # login account (context.username). Cross-pod kill and the log
             # viewer reconnect over SSH using state.username.
             username=context.raw_request.username,
-            ssh_config=context.raw_request.ssh_config,
+            # The Effective SSH config, not the requested one: kill / trace /
+            # poll reload it literally and must never re-run auto-selection.
+            ssh_config=context.effective_ssh_config,
             request_id=context.request_id,
             killable=context.cmd_config.killable,
             output_format=context.cmd_config.output_format,

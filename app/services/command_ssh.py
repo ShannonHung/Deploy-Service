@@ -7,7 +7,12 @@ from typing import Optional
 
 import asyncssh
 
-from app.domain.command import FALLBACK_SSH_CONFIG, SSHConnectionConfig, CommandState
+from app.domain.command import (
+    FALLBACK_SSH_CONFIG,
+    CommandState,
+    SSHConnectionConfig,
+    is_safe_ssh_config_name,
+)
 from app.core.config import get_settings
 from app.repositories.dry_run_ssh_connection import DryRunSSHConnection
 from app.repositories.ssh_auth_repository import create_authenticator
@@ -24,6 +29,43 @@ settings = get_settings()
 
 class SshSupport:
     """SSH connection + config loading shared by executor, lifecycle, trace, poll."""
+
+    @staticmethod
+    def _ssh_config_path(name: str) -> str:
+        config_dir = settings.SSH_CONFIG_DIR or settings.COMMAND_CONFIG_DIR
+        return os.path.join(config_dir, f"SSH-{name}.json")
+
+    def select_ssh_config(self, requested: str, bastion_name: Optional[str]) -> str:
+        """Return the name of the Effective SSH config for a new Run.
+
+        An explicit name is used as-is. ``default`` auto-selects: the SSH
+        config of the Bastion fronting the target if one is provisioned,
+        otherwise the Fallback SSH config (ADR 0002). Called once, at launch;
+        the result is recorded on the Run and never re-selected.
+
+        Runs in dry-run too — only the subsequent file read is faked — so the
+        Bastion-name check below stays part of the dry-run security surface.
+
+        Raises:
+            BaseAppException: the inventory returned a Bastion name that is not
+                a safe file-name component (500 — upstream data error).
+        """
+        if requested != FALLBACK_SSH_CONFIG or bastion_name is None:
+            return requested
+        if not is_safe_ssh_config_name(bastion_name):
+            raise BaseAppException(
+                "Inventory returned an invalid bastion name.",
+                detail={"bastion_name": bastion_name},
+            )
+        if os.path.exists(self._ssh_config_path(bastion_name)):
+            return bastion_name
+        logger.warning(
+            "No SSH config provisioned for bastion '%s'; using the default "
+            "SSH config. Add SSH-%s.json to use bastion-specific credentials.",
+            bastion_name,
+            bastion_name,
+        )
+        return FALLBACK_SSH_CONFIG
 
     def _load_ssh_config(self, name: str) -> SSHConnectionConfig:
         """Load the SSH config called *name*, literally — no fallback.
@@ -52,8 +94,7 @@ class SshSupport:
         if get_settings().DRY_RUN_MODE:
             return SSHConnectionConfig(auth_method="key", key_base64="")
 
-        config_dir = settings.SSH_CONFIG_DIR or settings.COMMAND_CONFIG_DIR
-        file_path = os.path.join(config_dir, f"SSH-{name}.json")
+        file_path = self._ssh_config_path(name)
         if not os.path.exists(file_path):
             if name == FALLBACK_SSH_CONFIG:
                 raise BaseAppException(
