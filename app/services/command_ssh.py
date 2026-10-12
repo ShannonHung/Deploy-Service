@@ -103,8 +103,7 @@ class SshSupport:
                 )
             raise SSHConfigNotFoundException(
                 f"SSH config '{name}' is not provisioned. "
-                f"Add the SSH-{name}.json secret, or omit ssh_config to use "
-                "the default.",
+                f"Add the SSH-{name}.json secret.",
                 detail={"ssh_config": name},
             )
         with open(file_path, "r", encoding="utf-8") as f:

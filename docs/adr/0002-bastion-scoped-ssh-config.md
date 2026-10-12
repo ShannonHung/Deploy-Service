@@ -39,8 +39,12 @@ secret. An explicit name with no file is a 400.
   `default` if it fell back), and kill/trace/poll load that name literally —
   they never re-run auto-selection. Otherwise a kill on another pod would depend
   on the inventory being up and unchanged, and could authenticate with a
-  different key than the launch did. States written before this change hold
-  `"default"`, which loads literally as before.
+  different key than the launch did. A Run whose recorded SSH config no longer
+  exists gets a 400 naming the missing config on kill / trace — never a silent
+  fallback — and the kill is refused *before* the Run moves to KILLING so it is
+  not stranded. This includes Runs launched before this change with an explicit
+  name that only worked via the old silent fallback; Runs that recorded
+  `"default"` load exactly as before.
 - A Bastion name comes from an external API and becomes part of a file path in
   a directory of private keys, so it is validated against a strict pattern and a
   bad one is a 500 (upstream data error). A caller-supplied `ssh_config` gets the

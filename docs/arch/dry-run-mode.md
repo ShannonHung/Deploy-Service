@@ -156,7 +156,9 @@ Three seams, all of them **existing** DI boundaries. No new seams are introduced
 **Why `_connect` is the right seam for the command API.** `execute_command` runs in this order:
 
 1. `_check_capacity` — backpressure gate
-2. `_prepare_execution` — whitelist load, argument regex, anti-injection, host resolution
+2. `_prepare_execution` — whitelist load, argument regex, anti-injection, host resolution,
+   SSH config selection (Bastion-name validation, ADR 0002); only the final SSH config
+   file read is faked, so an unknown explicit `ssh_config` is not a 400 in dry-run
 3. `_pipeline_builder.build` — `List[List[str]]` construction
 4. `_connect` — SSH session
 5. `_handle_fire_and_forget` / `_handle_async_execution`

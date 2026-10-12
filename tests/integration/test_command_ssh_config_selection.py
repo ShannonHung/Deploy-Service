@@ -252,3 +252,19 @@ def test_dry_run_hostname_default_goes_through_bastion_selection(monkeypatch, ss
         assert _recorded_ssh_config(state_repo) == "dry-run-bastion-type1"
     finally:
         get_settings.cache_clear()
+
+
+def test_dry_run_still_rejects_an_unsafe_ssh_config_name(monkeypatch):
+    """The name check is request validation, above the dry-run seam."""
+    monkeypatch.setenv("DRY_RUN_MODE", "true")
+    get_settings.cache_clear()
+    try:
+        app = create_app()
+        app.dependency_overrides[get_command_state_repository] = (
+            lambda: _InMemoryCommandStateRepo()
+        )
+        with TestClient(app) as c:
+            resp = _execute(c, ssh_config="../default")
+        assert resp.status_code == 422, resp.text
+    finally:
+        get_settings.cache_clear()
