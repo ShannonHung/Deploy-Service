@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import CommandExecutionException, NotFoundException
 from app.domain.command import HostType
 from app.repositories.inventory_repository import BastionMapping
 from app.repositories.inventory_repository import ClusterNodeInfo, ClusterRef, NodeInfo
@@ -182,3 +182,74 @@ async def test_malformed_pattern_raises_not_found_not_500():
 async def test_ip_resolver_has_no_bastion_name():
     resolved = await IpHostResolver().resolve("10.0.0.9")
     assert resolved.bastion_name is None
+
+
+# ── hostname + Bastion lookup for SSH config auto-selection (#51) ────────────
+
+
+class _CountingRepo(InMemoryInventoryRepository):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.lookups = 0
+        self.mapping_calls = 0
+
+    async def lookup_by_name(self, node_name):
+        self.lookups += 1
+        return await super().lookup_by_name(node_name)
+
+    async def list_mappings(self, type_name):
+        self.mapping_calls += 1
+        return await super().list_mappings(type_name)
+
+
+def _counting_repo(node_type="baremetal", cluster="type1-cluster-c1"):
+    base = _inventory_repo()
+    node = base._nodes["node1"].model_copy(
+        update={"node_type": node_type, "cluster": ClusterRef(id="1", name=cluster)}
+    )
+    return _CountingRepo(nodes={"node1": node}, mappings=base._mappings)
+
+
+def _hostname_resolver(repo, **kw):
+    return create_host_resolver(
+        HostType.HOSTNAME,
+        inventory_repo=repo,
+        ip_label="mgmt_ip",
+        node_type_map=_NODE_TYPE_MAP,
+        **kw,
+    )
+
+
+async def test_hostname_with_bastion_lookup_targets_node_but_names_its_bastion():
+    repo = _counting_repo()
+    resolved = await _hostname_resolver(repo, resolve_bastion=True).resolve("node1")
+    assert resolved.ip == "10.0.1.5"  # still the node, not the Bastion
+    assert resolved.bastion_name == "b"
+    assert repo.lookups == 1
+
+
+async def test_hostname_without_bastion_lookup_never_reads_mappings():
+    repo = _counting_repo(node_type="unmapped")
+    resolved = await _hostname_resolver(repo, resolve_bastion=False).resolve("node1")
+    assert resolved.bastion_name is None
+    assert repo.mapping_calls == 0
+
+
+async def test_hostname_bastion_type_override_is_honoured():
+    repo = _counting_repo(node_type="unmapped")
+    resolved = await _hostname_resolver(
+        repo, resolve_bastion=True, bastion_type="type1"
+    ).resolve("node1")
+    assert resolved.bastion_name == "b"
+
+
+async def test_hostname_unmapped_node_type_fails_the_request():
+    repo = _counting_repo(node_type="unmapped")
+    with pytest.raises(CommandExecutionException):
+        await _hostname_resolver(repo, resolve_bastion=True).resolve("node1")
+
+
+async def test_hostname_with_no_matching_bastion_fails_the_request():
+    repo = _counting_repo(cluster="orphan")
+    with pytest.raises(NotFoundException):
+        await _hostname_resolver(repo, resolve_bastion=True).resolve("node1")

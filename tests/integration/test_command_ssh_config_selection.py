@@ -196,3 +196,59 @@ def test_dry_run_still_validates_the_bastion_name(monkeypatch, ssh_dir):
         assert resp.status_code == 500, resp.text
     finally:
         get_settings.cache_clear()
+
+
+# ── hostname hosts (#51) ─────────────────────────────────────────────────────
+
+
+def test_hostname_default_uses_bastion_ssh_config_but_connects_to_node(ssh_dir):
+    shutil.copy(ssh_dir / "SSH-default.json", ssh_dir / "SSH-b1.json")
+    app, state_repo = _bastion_client(_inventory())
+    p, _ = _patch_asyncssh()
+    with TestClient(app) as c, p as mock_connect:
+        resp = _execute(c, host="node1", host_type="hostname")
+        assert resp.status_code == 200, resp.text
+        assert mock_connect.call_args.kwargs["host"] == "10.0.1.5"
+    assert _recorded_ssh_config(state_repo) == "b1"
+
+
+def test_hostname_explicit_ssh_config_needs_no_bastion_mapping(ssh_dir):
+    shutil.copy(ssh_dir / "SSH-default.json", ssh_dir / "SSH-cluster1.json")
+    inventory = _inventory()
+    inventory._mappings = {}  # no Bastion known for this node at all
+    app, state_repo = _bastion_client(inventory)
+    p, _ = _patch_asyncssh()
+    with TestClient(app) as c, p:
+        resp = _execute(c, host="node1", host_type="hostname", ssh_config="cluster1")
+    assert resp.status_code == 200, resp.text
+    assert _recorded_ssh_config(state_repo) == "cluster1"
+
+
+def test_hostname_default_without_a_bastion_mapping_fails(ssh_dir):
+    inventory = _inventory()
+    inventory._mappings = {}
+    app, _ = _bastion_client(inventory)
+    p, _ = _patch_asyncssh()
+    with TestClient(app) as c, p as mock_connect:
+        resp = _execute(c, host="node1", host_type="hostname")
+    assert resp.status_code == 404, resp.text
+    mock_connect.assert_not_called()
+
+
+def test_dry_run_hostname_default_goes_through_bastion_selection(monkeypatch, ssh_dir):
+    """Dry-run inventory knows a Bastion for every node (dry-run-bastion-<type>);
+    selection must run and pick its SSH config even though the file read is
+    faked."""
+    shutil.copy(ssh_dir / "SSH-default.json", ssh_dir / "SSH-dry-run-bastion-type1.json")
+    monkeypatch.setenv("DRY_RUN_MODE", "true")
+    get_settings.cache_clear()
+    try:
+        app = create_app()
+        state_repo = _InMemoryCommandStateRepo()
+        app.dependency_overrides[get_command_state_repository] = lambda: state_repo
+        with TestClient(app) as c:
+            resp = _execute(c, host="node1", host_type="hostname")
+        assert resp.status_code == 200, resp.text
+        assert _recorded_ssh_config(state_repo) == "dry-run-bastion-type1"
+    finally:
+        get_settings.cache_clear()

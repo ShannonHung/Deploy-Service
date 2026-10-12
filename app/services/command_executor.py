@@ -18,6 +18,7 @@ from app.domain.command import (
     CommandState,
     CommandStatus,
     RunningCommandEntry,
+    FALLBACK_SSH_CONFIG,
 )
 from app.core.config import get_settings
 from app.repositories.ssh_auth_repository import create_authenticator
@@ -165,7 +166,9 @@ class CommandExecutor:
             UpstreamTimeoutException / UpstreamUnavailableException:
                 Inventory lookup failures (propagated).
             CommandExecutionException: Argument validation failures (400).
-            BaseAppException: SSH configuration missing on disk (500).
+            SSHConfigNotFoundException: Named SSH config not provisioned (400).
+            BaseAppException: Fallback SSH config missing on disk, or the
+                inventory returned an unsafe Bastion name (500).
         """
         whitelist = self._load_user_whitelist(username)
 
@@ -184,6 +187,9 @@ class CommandExecutor:
             bastion_type=bastion_type,
             ip_label=ip_label,
             slash_map=settings.CLUSTER_SLASH_TYPE_MAP,
+            # Only auto-selection needs the Bastion of a hostname target; an
+            # explicit ssh_config skips the extra mapping lookup (ADR 0002).
+            resolve_bastion=req.ssh_config == FALLBACK_SSH_CONFIG,
         )
         resolved = await resolver.resolve(req.host)
 
