@@ -7,7 +7,7 @@ from typing import Optional
 
 import asyncssh
 
-from app.domain.command import SSHConnectionConfig, CommandState
+from app.domain.command import FALLBACK_SSH_CONFIG, SSHConnectionConfig, CommandState
 from app.core.config import get_settings
 from app.repositories.dry_run_ssh_connection import DryRunSSHConnection
 from app.repositories.ssh_auth_repository import create_authenticator
@@ -15,6 +15,7 @@ from app.core.exceptions import (
     UpstreamTimeoutException,
     UpstreamUnavailableException,
     BaseAppException,
+    SSHConfigNotFoundException,
 )
 
 logger = logging.getLogger(__name__)
@@ -24,17 +25,22 @@ settings = get_settings()
 class SshSupport:
     """SSH connection + config loading shared by executor, lifecycle, trace, poll."""
 
-    def _load_ssh_config(self, target: str) -> SSHConnectionConfig:
-        """Load SSH connection configuration for the specified target cluster.
+    def _load_ssh_config(self, name: str) -> SSHConnectionConfig:
+        """Load the SSH config called *name*, literally — no fallback.
 
-        Looks for ``SSH-{target}.json`` first; falls back to
-        ``SSH-default.json`` if the target-specific file is absent. Both are
-        read from ``SSH_CONFIG_DIR`` (which falls back to ``COMMAND_CONFIG_DIR``
-        when unset) — kept separate from the command whitelists so the SSH
-        configs, which carry private keys, can live on a Vault-backed mount.
+        Reads ``SSH-{name}.json`` from ``SSH_CONFIG_DIR`` (which falls back to
+        ``COMMAND_CONFIG_DIR`` when unset) — kept separate from the command
+        whitelists so the SSH configs, which carry private keys, can live on a
+        Vault-backed mount.
+
+        Choosing *which* name to load (auto-selection for ``default``) happens
+        once, at launch; this loader is also what kill / trace / poll use to
+        reload a Run's recorded SSH config, so it must never re-select.
 
         Raises:
-            BaseAppException: If neither file exists (500 — operator misconfig).
+            SSHConfigNotFoundException: a named config is not provisioned (400).
+            BaseAppException: the Fallback SSH config itself is missing (500 —
+                operator misconfig).
 
         In dry-run no SSH connection is ever opened, so a synthetic config is
         returned rather than requiring real key material on disk. That is the
@@ -47,14 +53,19 @@ class SshSupport:
             return SSHConnectionConfig(auth_method="key", key_base64="")
 
         config_dir = settings.SSH_CONFIG_DIR or settings.COMMAND_CONFIG_DIR
-        file_path = os.path.join(config_dir, f"SSH-{target}.json")
+        file_path = os.path.join(config_dir, f"SSH-{name}.json")
         if not os.path.exists(file_path):
-            file_path = os.path.join(config_dir, "SSH-default.json")
-            if not os.path.exists(file_path):
+            if name == FALLBACK_SSH_CONFIG:
                 raise BaseAppException(
                     "SSH configuration not found.",
-                    detail={"target": target},
+                    detail={"ssh_config": name},
                 )
+            raise SSHConfigNotFoundException(
+                f"SSH config '{name}' is not provisioned. "
+                f"Add the SSH-{name}.json secret, or omit ssh_config to use "
+                "the default.",
+                detail={"ssh_config": name},
+            )
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return SSHConnectionConfig(**data)

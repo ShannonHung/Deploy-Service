@@ -12,7 +12,7 @@ import pytest
 
 from app.services import command_ssh as ssh_mod
 from app.services.command_ssh import SshSupport
-from app.core.exceptions import BaseAppException
+from app.core.exceptions import BaseAppException, SSHConfigNotFoundException
 
 _CFG = {"auth_method": "key", "key_base64": "Zm9v"}
 
@@ -29,7 +29,7 @@ def test_uses_ssh_config_dir_when_set(monkeypatch, tmp_path):
     monkeypatch.setattr(ssh_mod.settings, "COMMAND_CONFIG_DIR", str(tmp_path / "cmd"))
     monkeypatch.setattr(ssh_mod.settings, "SSH_CONFIG_DIR", str(ssh_dir))
 
-    cfg = SshSupport()._load_ssh_config("some-cluster")
+    cfg = SshSupport()._load_ssh_config("default")
     assert cfg.auth_method == "key"
 
 
@@ -50,11 +50,23 @@ def test_falls_back_to_command_config_dir_when_unset(monkeypatch, tmp_path):
     monkeypatch.setattr(ssh_mod.settings, "SSH_CONFIG_DIR", "")
     monkeypatch.setattr(ssh_mod.settings, "COMMAND_CONFIG_DIR", str(tmp_path))
 
-    cfg = SshSupport()._load_ssh_config("whatever")
+    cfg = SshSupport()._load_ssh_config("default")
     assert cfg.auth_method == "key"
 
 
-def test_missing_config_raises(monkeypatch, tmp_path):
+def test_missing_fallback_config_is_a_server_error(monkeypatch, tmp_path):
     monkeypatch.setattr(ssh_mod.settings, "SSH_CONFIG_DIR", str(tmp_path))
-    with pytest.raises(BaseAppException):
+    with pytest.raises(BaseAppException) as exc:
+        SshSupport()._load_ssh_config("default")
+    assert exc.value.http_status == 500
+
+
+def test_named_config_is_loaded_literally_without_fallback(monkeypatch, tmp_path):
+    """An explicit name expresses intent: silently authenticating with the
+    Fallback SSH config would hide a missing secret (ADR 0002)."""
+    _write_default(tmp_path)
+    monkeypatch.setattr(ssh_mod.settings, "SSH_CONFIG_DIR", str(tmp_path))
+    with pytest.raises(SSHConfigNotFoundException) as exc:
         SshSupport()._load_ssh_config("nope")
+    assert exc.value.http_status == 400
+    assert exc.value.detail == {"ssh_config": "nope"}
