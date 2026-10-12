@@ -9,8 +9,6 @@ CommandService does not need to change.
 
 from __future__ import annotations
 
-import logging
-import re
 from abc import ABC, abstractmethod
 from typing import Dict, Optional
 
@@ -18,9 +16,8 @@ from pydantic import BaseModel, Field
 
 from app.core.exceptions import CommandExecutionException, NotFoundException
 from app.domain.command import HostType
+from app.repositories.bastion_matching import bastion_type_for_node, match_bastion
 from app.repositories.inventory_repository import InventoryRepository
-
-_logger = logging.getLogger(__name__)
 
 
 def cluster_type_from_name(
@@ -48,6 +45,9 @@ class ResolvedHost(BaseModel):
     ip: str
     source_input: str
     metadata: Dict[str, str] = Field(default_factory=dict)
+    # The Bastion fronting the target, when resolution went through one. Typed
+    # (not a metadata key) because it selects which SSH credentials are used.
+    bastion_name: Optional[str] = None
 
 
 class HostResolver(ABC):
@@ -113,48 +113,24 @@ class ClusterBastionHostResolver(HostResolver):
         if self._bastion_type:
             bastion_type = self._bastion_type
         else:
-            node_type = node_info.node_type
-            bastion_type = self._node_type_map.get(node_type)
-            if bastion_type is None:
-                known = ", ".join(
-                    f"{k!r}→{v!r}" for k, v in self._node_type_map.items()
-                )
-                raise CommandExecutionException(
-                    f"node_type '{node_type}' has no bastion mapping. "
-                    f"Known mappings: {{{known}}}. "
-                    "Update BASTION_NODE_TYPE_MAP to include this node_type.",
-                    detail={
-                        "node_type": node_type,
-                        "node_type_map": self._node_type_map,
-                    },
-                )
+            bastion_type = bastion_type_for_node(
+                node_info.node_type, self._node_type_map
+            )
 
-        mappings = await self._inventory_repo.list_mappings(bastion_type)
-
-        for mapping in mappings:
-            for pattern in mapping.patterns:
-                try:
-                    matched = re.fullmatch(pattern, cluster_name)
-                except re.error:
-                    _logger.warning(
-                        "Skipping invalid regex pattern %r in bastion mapping "
-                        "(type=%s) — fix the mapping API data",
-                        pattern,
-                        bastion_type,
-                    )
-                    continue
-                if matched:
-                    return ResolvedHost(
-                        ip=mapping.bastion_ip,
-                        source_input=raw_host,
-                        metadata={
-                            "node_name": raw_host,
-                            "cluster_name": cluster_name,
-                            "bastion_hostname": mapping.bastion,
-                            "bastion_type": bastion_type,
-                            "matched_pattern": pattern,
-                        },
-                    )
+        match = await match_bastion(self._inventory_repo, bastion_type, cluster_name)
+        if match is not None:
+            return ResolvedHost(
+                ip=match.mapping.bastion_ip,
+                source_input=raw_host,
+                metadata={
+                    "node_name": raw_host,
+                    "cluster_name": cluster_name,
+                    "bastion_hostname": match.mapping.bastion,
+                    "bastion_type": bastion_type,
+                    "matched_pattern": match.pattern,
+                },
+                bastion_name=match.mapping.bastion,
+            )
 
         raise NotFoundException(
             f"No bastion mapping matched cluster '{cluster_name}' "
@@ -186,32 +162,20 @@ class ClusterNameResolver(HostResolver):
     async def resolve(self, raw_host: str) -> ResolvedHost:
         cluster_name = raw_host
         bastion_type, has_slash = cluster_type_from_name(cluster_name, self._slash_map)
-        mappings = await self._inventory_repo.list_mappings(bastion_type)
-
-        for mapping in mappings:
-            for pattern in mapping.patterns:
-                try:
-                    matched = re.fullmatch(pattern, cluster_name)
-                except re.error:
-                    _logger.warning(
-                        "Skipping invalid regex pattern %r in bastion mapping "
-                        "(type=%s) — fix the mapping API data",
-                        pattern,
-                        bastion_type,
-                    )
-                    continue
-                if matched:
-                    return ResolvedHost(
-                        ip=mapping.bastion_ip,
-                        source_input=cluster_name,
-                        metadata={
-                            "cluster_name": cluster_name,
-                            "bastion_type": bastion_type,
-                            "has_slash": str(has_slash),
-                            "bastion_hostname": mapping.bastion,
-                            "matched_pattern": pattern,
-                        },
-                    )
+        match = await match_bastion(self._inventory_repo, bastion_type, cluster_name)
+        if match is not None:
+            return ResolvedHost(
+                ip=match.mapping.bastion_ip,
+                source_input=cluster_name,
+                metadata={
+                    "cluster_name": cluster_name,
+                    "bastion_type": bastion_type,
+                    "has_slash": str(has_slash),
+                    "bastion_hostname": match.mapping.bastion,
+                    "matched_pattern": match.pattern,
+                },
+                bastion_name=match.mapping.bastion,
+            )
 
         raise NotFoundException(
             f"No bastion mapping matched cluster '{cluster_name}' "

@@ -287,3 +287,19 @@ async def test_unknown_node_type_raises_with_clear_message():
     msg = str(exc_info.value)
     assert "unknown-type" in msg
     assert "baremetal" in msg  # map contents shown
+
+
+async def test_resolved_host_carries_bastion_name():
+    mappings = {
+        "type1": [
+            BastionMapping(
+                patterns=["type1-.*"], runner="r1", bastion="b1", bastion_ip="10.0.0.1"
+            )
+        ]
+    }
+    resolver = ClusterBastionHostResolver(
+        _inventory_repo("type1-cluster-c1", mappings_by_type=mappings),
+        node_type_map=_DEFAULT_NODE_TYPE_MAP,
+    )
+    resolved = await resolver.resolve("node1")
+    assert resolved.bastion_name == "b1"

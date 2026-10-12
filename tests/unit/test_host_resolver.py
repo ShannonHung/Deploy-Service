@@ -177,3 +177,8 @@ async def test_malformed_pattern_raises_not_found_not_500():
     resolver = ClusterBastionHostResolver(repo, node_type_map=_NODE_TYPE_MAP)
     with pytest.raises(NotFoundException):
         await resolver.resolve("node1")
+
+
+async def test_ip_resolver_has_no_bastion_name():
+    resolved = await IpHostResolver().resolve("10.0.0.9")
+    assert resolved.bastion_name is None
