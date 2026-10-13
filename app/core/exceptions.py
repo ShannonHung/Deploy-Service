@@ -177,6 +177,19 @@ class CommandExecutionException(BaseAppException):
     log_level = logging.WARNING
 
 
+class SSHConfigNotFoundException(BaseAppException):
+    """A caller named an SSH config that has not been provisioned.
+
+    Raised instead of silently falling back to the Fallback SSH config: an
+    explicit name expresses intent, and authenticating with other credentials
+    would hide the missing secret (ADR 0002).
+    """
+
+    http_status = 400
+    error_code = "SSH_CONFIG_NOT_FOUND"
+    log_level = logging.WARNING
+
+
 class WhitelistConfigurationException(BaseAppException):
     """Raised when a user's allow-commands whitelist file is malformed.
 

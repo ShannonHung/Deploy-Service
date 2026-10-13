@@ -128,3 +128,23 @@ async def test_non_force_kill_still_respects_non_killable(monkeypatch):
     killed.assert_not_awaited()
     assert state.status != CommandStatus.KILLING
     assert state.status != CommandStatus.KILLED
+
+
+async def test_cross_pod_kill_with_missing_recorded_ssh_config_errors_before_killing(
+    monkeypatch, tmp_path
+):
+    """A Run whose recorded SSH config has vanished (e.g. started before #49
+    made explicit names strict) must tell the caller the config is missing —
+    and must not be stranded in KILLING on the way out."""
+    import pytest
+
+    from app.core.exceptions import SSHConfigNotFoundException
+    from app.services import command_ssh as ssh_mod
+
+    monkeypatch.setattr(ssh_mod.settings, "SSH_CONFIG_DIR", str(tmp_path))
+    state = _state(killable=True, ssh_config="gone", pgids=[123])
+    svc = CommandService(repo=_Repo(state), inventory_repo=None)
+
+    with pytest.raises(SSHConfigNotFoundException):
+        await svc.kill_command("c1")
+    assert state.status == CommandStatus.RUNNING

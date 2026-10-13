@@ -75,3 +75,8 @@ def test_factory_returns_cluster_resolver():
 def test_factory_cluster_requires_slash_map():
     with pytest.raises(ValueError):
         create_host_resolver(HostType.CLUSTER, inventory_repo=_repo())
+
+
+async def test_resolved_host_carries_bastion_name():
+    resolved = await ClusterNameResolver(_repo(), SLASH_MAP).resolve("taiwan-x")
+    assert resolved.bastion_name == "b1"

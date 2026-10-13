@@ -117,6 +117,7 @@ class CommandService:
             exec_command=state.exec_command,
             host_type=state.host_type,
             resolved_ip=state.resolved_ip,
+            ssh_config=state.ssh_config,
             pgids=state.pgids,
             output_json=output_json,
             output_json_error=output_json_error,
