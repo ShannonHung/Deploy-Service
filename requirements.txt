@@ -11,6 +11,12 @@ anyio==4.12.1
     #   httpx
     #   starlette
     #   watchfiles
+asgiref==3.13.0
+    # via opentelemetry-instrumentation-asgi
+ast-serialize==0.9.0
+    # via mypy
+astroid==4.0.4
+    # via pylint
 async-timeout==5.0.1 ; python_full_version < '3.11.3'
     # via redis
 asyncssh==2.22.0
@@ -34,16 +40,21 @@ click==8.3.1
 colorama==0.4.6 ; sys_platform == 'win32'
     # via
     #   click
+    #   pylint
     #   pytest
     #   uvicorn
 cryptography==46.0.5
     # via
     #   asyncssh
     #   python-jose
+dill==0.4.1
+    # via pylint
 ecdsa==0.19.1
     # via python-jose
 fastapi==0.135.1
     # via deploy-service
+googleapis-common-protos==1.76.0
+    # via opentelemetry-exporter-otlp-proto-http
 h11==0.16.0
     # via
     #   httpcore
@@ -61,22 +72,107 @@ idna==3.11
     #   requests
 iniconfig==2.3.0
     # via pytest
+isort==9.0.1
+    # via pylint
+librt==0.15.0 ; platform_python_implementation != 'PyPy'
+    # via mypy
+mccabe==0.7.0
+    # via pylint
+mypy==2.3.1
 mypy-extensions==1.1.0
-    # via black
+    # via
+    #   black
+    #   isort
+    #   mypy
+opentelemetry-api==1.45.2
+    # via
+    #   deploy-service
+    #   opentelemetry-distro
+    #   opentelemetry-exporter-http-transport
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-instrumentation-httpx
+    #   opentelemetry-instrumentation-logging
+    #   opentelemetry-instrumentation-redis
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
+opentelemetry-distro==0.66b2
+    # via deploy-service
+opentelemetry-exporter-http-transport==0.66b2
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-common==0.66b2
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-proto-common==1.45.2
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-proto-http==1.45.2
+    # via deploy-service
+opentelemetry-instrumentation==0.66b2
+    # via
+    #   opentelemetry-distro
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-instrumentation-httpx
+    #   opentelemetry-instrumentation-logging
+    #   opentelemetry-instrumentation-redis
+opentelemetry-instrumentation-asgi==0.66b2
+    # via opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-fastapi==0.66b2
+    # via deploy-service
+opentelemetry-instrumentation-httpx==0.66b2
+    # via deploy-service
+opentelemetry-instrumentation-logging==0.66b2
+    # via deploy-service
+opentelemetry-instrumentation-redis==0.66b2
+    # via deploy-service
+opentelemetry-proto==1.45.2
+    # via
+    #   opentelemetry-exporter-otlp-proto-common
+    #   opentelemetry-exporter-otlp-proto-http
+opentelemetry-sdk==1.45.2
+    # via
+    #   deploy-service
+    #   opentelemetry-distro
+    #   opentelemetry-exporter-otlp-common
+    #   opentelemetry-exporter-otlp-proto-http
+opentelemetry-semantic-conventions==0.66b2
+    # via
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-instrumentation-httpx
+    #   opentelemetry-instrumentation-logging
+    #   opentelemetry-instrumentation-redis
+    #   opentelemetry-sdk
+opentelemetry-util-http==0.66b2
+    # via
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-instrumentation-httpx
 packaging==26.0
     # via
     #   black
+    #   opentelemetry-instrumentation
     #   pytest
 pathspec==1.1.1
-    # via black
+    # via
+    #   black
+    #   mypy
 platformdirs==4.9.6
-    # via black
+    # via
+    #   black
+    #   pylint
 pluggy==1.6.0
     # via pytest
 prometheus-client==0.25.0
     # via prometheus-fastapi-instrumentator
 prometheus-fastapi-instrumentator==7.1.0
     # via deploy-service
+protobuf==7.36.2
+    # via
+    #   googleapis-common-protos
+    #   opentelemetry-proto
 pyasn1==0.6.2
     # via
     #   python-jose
@@ -93,6 +189,7 @@ pydantic-settings==2.13.1
     # via deploy-service
 pygments==2.19.2
     # via pytest
+pylint==4.0.8
 pytest==9.0.2
     # via
     #   pytest-asyncio
@@ -118,6 +215,8 @@ redis==7.4.0
     # via deploy-service
 requests==2.32.5
     # via
+    #   opentelemetry-exporter-http-transport
+    #   opentelemetry-exporter-otlp-proto-http
     #   python-gitlab
     #   requests-toolbelt
 requests-toolbelt==1.0.0
@@ -130,11 +229,18 @@ starlette==0.52.1
     # via
     #   fastapi
     #   prometheus-fastapi-instrumentator
+tomlkit==0.15.1
+    # via pylint
 typing-extensions==4.15.0
     # via
     #   anyio
     #   asyncssh
     #   fastapi
+    #   mypy
+    #   opentelemetry-api
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
     #   pydantic
     #   pydantic-core
     #   pytest-asyncio
@@ -155,3 +261,8 @@ watchfiles==1.1.1
     # via uvicorn
 websockets==16.0
     # via uvicorn
+wrapt==2.5.2
+    # via
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-httpx
+    #   opentelemetry-instrumentation-redis

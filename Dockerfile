@@ -18,4 +18,6 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# opentelemetry-instrument 在啟動 uvicorn 前替 FastAPI/httpx/redis 等套上 tracing；
+# 行為由 OTEL_* 環境變數決定（未設定 exporter 時請見 k3d-deploy/otel/README.md）。
+CMD ["opentelemetry-instrument", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -72,7 +72,16 @@ dev: redis-up
 # prod: 讀 .env + .env.prod（.env.prod 的值會覆蓋 .env）
 .PHONY: prod
 prod:
-	APP_ENV=prod $(UV) run uvicorn app.main:app --host 0.0.0.0 --port 8000
+	APP_ENV=prod $(UV) run opentelemetry-instrument uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# dev-otel: 本機練習 tracing。span 直接印在 console（不需要 Collector）。
+# 不含 --reload：auto-instrumentation 與 reload 的子程序模型不相容。
+.PHONY: dev-otel
+dev-otel: redis-up
+	APP_ENV=dev OTEL_SERVICE_NAME=deploy-service \
+	OTEL_TRACES_EXPORTER=console OTEL_METRICS_EXPORTER=none OTEL_LOGS_EXPORTER=none \
+	OTEL_PYTHON_EXCLUDED_URLS=health,metrics \
+	$(UV) run opentelemetry-instrument uvicorn app.main:app --port 8001
 
 # inventory-api: 啟動本機假 Inventory API (port 9001)
 .PHONY: inventory-api

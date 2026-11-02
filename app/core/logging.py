@@ -17,6 +17,7 @@ import uuid
 from contextvars import ContextVar
 from typing import Awaitable, Callable
 
+from opentelemetry import trace
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -67,6 +68,26 @@ class RequestIdFilter(logging.Filter):
         return True
 
 
+class OtelCorrelationFilter(logging.Filter):
+    """Logging filter that adds ``otelTraceID`` / ``otelSpanID`` to every log record.
+
+    Reads the current span from the OpenTelemetry context. Outside a span — or
+    when the process was not started under ``opentelemetry-instrument`` (tests,
+    ``make dev``) — the API returns an invalid no-op span and both fields are
+    ``-``, so the filter is always safe to install.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        span_context = trace.get_current_span().get_span_context()
+        if span_context.is_valid:
+            record.otelTraceID = format(span_context.trace_id, "032x")  # type: ignore[attr-defined]
+            record.otelSpanID = format(span_context.span_id, "016x")  # type: ignore[attr-defined]
+        else:
+            record.otelTraceID = "-"  # type: ignore[attr-defined]
+            record.otelSpanID = "-"  # type: ignore[attr-defined]
+        return True
+
+
 class HealthCheckFilter(logging.Filter):
     """Filter out /health and /metrics access logs to reduce noise."""
 
@@ -76,6 +97,7 @@ class HealthCheckFilter(logging.Filter):
 
 
 _request_id_filter = RequestIdFilter()
+_otel_filter = OtelCorrelationFilter()
 _health_filter = HealthCheckFilter()
 
 
@@ -126,11 +148,13 @@ def setup_logging(log_level: str = "INFO") -> None:
 
     handler = logging.StreamHandler()
     handler.addFilter(_request_id_filter)
+    handler.addFilter(_otel_filter)
     handler.setFormatter(
         logging.Formatter(
             fmt="%(asctime)s | %(levelname)-8s | req=%(request_id)s | "
             "user=%(username)s | cmd=%(command_id)s | "
             "target=%(host)s:%(port)s | "
+            "trace_id=%(otelTraceID)s span_id=%(otelSpanID)s | "
             "%(name)s:%(lineno)d | %(message)s",
             datefmt="%Y-%m-%dT%H:%M:%S",
         )
